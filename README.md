@@ -2,89 +2,109 @@
 
 Confidence-Aware Multi-Source Synchronization (CAMS) for a Justice Digital Twin.
 
-## Setup
+Runs **locally on Windows** with Python + PostgreSQL. Docker is **not** required.
 
-```bash
-cp .env.example .env
-docker compose up --build
+## Prerequisites
+
+- Python 3.11+
+- PostgreSQL 14+ (local install)
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) (only needed when using AI features)
+
+## 1. Install PostgreSQL (Windows)
+
+1. Download the installer from https://www.postgresql.org/download/windows/
+2. Install and set a password for the `postgres` superuser.
+3. Ensure PostgreSQL is running (default port `5432`).
+4. Open **SQL Shell (psql)** or pgAdmin and create the database + app role:
+
+```sql
+CREATE USER nyayaos WITH PASSWORD 'your_strong_password';
+CREATE DATABASE nyayaos OWNER nyayaos;
+GRANT ALL PRIVILEGES ON DATABASE nyayaos TO nyayaos;
 ```
 
-API docs: http://localhost:8000/docs
+Replace `your_strong_password` with a real password, then put the same values in `.env`.
 
-## Run tests (Person B's CAMS engine, no DB needed)
+## 2. Configure environment
 
-```bash
+```powershell
+cd MajorProject
+copy .env.example .env
+```
+
+Edit `.env`:
+
+```env
+DATABASE_URL=postgresql+asyncpg://USERNAME:PASSWORD@localhost:5432/nyayaos
+JWT_SECRET_KEY=GENERATE_A_NEW_SECURE_SECRET
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+REDIS_URL=redis://localhost:6379/0
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+### Generate a JWT secret
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Paste the output into `JWT_SECRET_KEY`. Do not commit `.env`.
+
+### Add the Gemini API key
+
+1. Create a key at https://aistudio.google.com/apikey
+2. Set `GEMINI_API_KEY=...` in `.env`
+3. Optionally change `GEMINI_MODEL` (default: `gemini-2.5-flash`)
+
+Redis is **optional**. Person A/B and app startup do **not** require Redis. Leave `REDIS_URL` as-is or blank; a missing Redis server will not block startup.
+
+## 3. Install and run (Windows)
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-pytest tests/
+alembic upgrade head
+python -m app.seed
+uvicorn app.main:app --reload
 ```
 
-## Run the evaluation harness standalone (no DB, no API)
+- API: http://localhost:8000
+- Swagger UI: http://localhost:8000/docs
+- Health: http://localhost:8000/health
 
-```bash
-python -m app.eval.runner
+Seed admin (dev only): `admin@nyayaos.dev` / `AdminPass123!`
+
+## 4. Run tests
+
+```powershell
+.venv\Scripts\activate
+pytest tests/ -v
 ```
+
+CAMS unit tests need no database. Auth/case tests use in-memory SQLite.
+
+## 5. Gemini service
+
+AI calls go through `app/services/gemini_service.py` (google-genai SDK). Routes must not call Gemini directly. The service:
+
+- Reads `GEMINI_API_KEY` / `GEMINI_MODEL` from settings
+- Never returns or logs the API key
+- Raises a clear error if the key is missing
+- Creates the client only when a generate call is made
 
 ## Ownership map
 
 | Folder | Owner | Depends on |
 |---|---|---|
-| `app/core/`, `app/models/user.py`, `app/models/case.py`, `app/api/routes/auth.py`, `app/api/routes/cases.py` | **Person A** | nothing — build first |
-| `app/cams/` | **Person B** | nothing — pure Python, start immediately |
-| `app/models/observation.py`, `app/models/source_authority.py`, `app/services/observation_service.py`, `app/api/routes/observations.py`, `app/api/routes/twin.py` | **Person C** | Person A's `core/database.py`, `core/security.py`; Person B's `cams/models.py` + `cams/engine.py` shapes |
-| `app/baselines/`, `app/eval/`, `app/api/routes/eval.py` | **Person D** | Person B's `cams/models.py` shapes only — start immediately |
+| `app/core/`, `app/models/user.py`, `app/models/case.py`, `app/api/routes/auth.py`, `app/api/routes/cases.py` | **Person A** | — |
+| `app/cams/` | **Person B** | — |
+| `app/models/observation.py`, `app/services/observation_service.py`, observation/twin routes | **Person C** | A + B contracts |
+| `app/baselines/`, `app/eval/` | **Person D** | B contracts |
+| `app/services/gemini_service.py` | Shared AI | `.env` Gemini vars |
 
-## The one contract to agree on before splitting up
+## Optional Docker files
 
-`app/cams/models.py` — the `Candidate`, `CAMSWeights`, and `SyncResult` dataclasses.
-Everything else can be built independently against these three shapes.
-
-## Folder structure
-
-```
-nyayaos/
-  main.py                        # FastAPI app + router wiring
-  requirements.txt
-  docker-compose.yml
-  Dockerfile
-  .env.example
-  app/
-    core/
-      config.py                  # [A] settings from .env
-      database.py                # [A] async SQLAlchemy session
-      security.py                # [A] JWT + require_role dependency
-    models/
-      base.py                    # [A] shared declarative Base
-      user.py                    # [A]
-      case.py                    # [A] Case, Entity
-      observation.py             # [C] FactKey, Observation, TwinState, SyncDecision
-      source_authority.py        # [C] SourceAuthorityRule, CAMSConfig
-    schemas/
-      auth.py                    # [A]
-      observation.py             # [C]
-    cams/
-      models.py                  # [B] Candidate / CAMSWeights / SyncResult — THE CONTRACT
-      engine.py                  # [B] synchronize() — Algorithm 1
-      factors.py                 # [B] A/T/X/E heuristics
-    services/
-      observation_service.py     # [C] ingestion -> CAMS -> TwinState (the integration point)
-    baselines/
-      latest_update_wins.py      # [D]
-      majority_voting.py         # [D]
-      fixed_source_authority.py  # [D]
-    eval/
-      scenario_generator.py      # [D] conflicting/delayed/noisy/corroboration/duplicate
-      metrics.py                 # [D] TSA, Conflict Resolution Accuracy, etc.
-      runner.py                  # [D] runs CAMS + baselines + ablations
-    api/
-      routes/
-        auth.py                  # [A]
-        cases.py                 # [A]
-        observations.py          # [C]
-        twin.py                  # [C]
-        eval.py                  # [D]
-  tests/
-    test_cams_engine.py          # [B]
-  alembic/
-    env.py
-    versions/
-```
+`Dockerfile` and `docker-compose.yml` may still exist in the repo but are **not used** for the local Windows workflow. Ask before deleting them if you want them removed.
