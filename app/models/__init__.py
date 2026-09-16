@@ -1,7 +1,13 @@
 """ORM models package."""
 from app.models.base import Base
 from app.models.case import Case, Entity
-from app.models.observation import FactKey, Observation, SyncDecision, TwinState
+from app.models.observation import (
+    FactKey,
+    Observation,
+    SyncDecision,
+    TwinState,
+    TwinStateVersion,
+)
 from app.models.source_authority import CAMSConfig, SourceAuthorityRule
 from app.models.user import User, UserRole
 
@@ -14,6 +20,7 @@ __all__ = [
     "FactKey",
     "Observation",
     "TwinState",
+    "TwinStateVersion",
     "SyncDecision",
     "SourceAuthorityRule",
     "CAMSConfig",

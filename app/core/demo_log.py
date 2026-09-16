@@ -40,3 +40,24 @@ def success(msg: str) -> None:
 
 def warn(msg: str) -> None:
     logger.info("    ! %s", msg)
+
+
+def table(headers: list[str], rows: list[list[Any]]) -> None:
+    str_rows = [[str(c) for c in row] for row in rows]
+    widths = [len(h) for h in headers]
+    for row in str_rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
+    header = "| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + " |"
+    logger.info("    %s", sep)
+    logger.info("    %s", header)
+    logger.info("    %s", sep)
+    if not str_rows:
+        logger.info("    | %s |", " | ".join("-".ljust(w) for w in widths))
+    for row in str_rows:
+        logger.info(
+            "    | %s |",
+            " | ".join(row[i].ljust(widths[i]) for i in range(len(headers))),
+        )
+    logger.info("    %s", sep)

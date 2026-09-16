@@ -15,6 +15,14 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.models.base import Base
 from app.models.case import Case, Entity  # noqa: F401 — register metadata
+from app.models.observation import (  # noqa: F401 — register metadata
+    FactKey,
+    Observation,
+    SyncDecision,
+    TwinState,
+    TwinStateVersion,
+)
+from app.models.source_authority import CAMSConfig, SourceAuthorityRule  # noqa: F401
 from app.models.user import User
 from main import app
 
@@ -86,6 +94,39 @@ async def police_user(db_session: AsyncSession) -> User:
         password="PolicePass123!",
         role="police",
         name="Police",
+    )
+
+
+@pytest_asyncio.fixture
+async def court_user(db_session: AsyncSession) -> User:
+    return await _create_user(
+        db_session,
+        email="court@example.com",
+        password="CourtPass123!",
+        role="court",
+        name="Court",
+    )
+
+
+@pytest_asyncio.fixture
+async def lawyer_user(db_session: AsyncSession) -> User:
+    return await _create_user(
+        db_session,
+        email="lawyer@example.com",
+        password="LawyerPass123!",
+        role="lawyer",
+        name="Lawyer",
+    )
+
+
+@pytest_asyncio.fixture
+async def forensic_user(db_session: AsyncSession) -> User:
+    return await _create_user(
+        db_session,
+        email="forensic@example.com",
+        password="ForensicPass123!",
+        role="forensic",
+        name="Forensic",
     )
 
 

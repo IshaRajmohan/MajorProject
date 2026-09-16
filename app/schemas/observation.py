@@ -49,6 +49,8 @@ class IngestResponse(BaseModel):
     observation: ObservationResponse
     sync: SyncResultOut
     twin_updated: bool
+    fact_key_id: str
+    is_duplicate: bool = False
 
 
 class TwinFactOut(BaseModel):
@@ -58,12 +60,28 @@ class TwinFactOut(BaseModel):
     current_value: dict[str, Any] | None
     confidence: float | None
     source_observation_id: str | None
+    version: int = 0
     updated_at: datetime
 
 
 class TwinStateOut(BaseModel):
     case_id: str
     facts: list[TwinFactOut]
+
+
+class TwinStateVersionOut(BaseModel):
+    id: str
+    twin_state_id: str
+    fact_key_id: str
+    case_id: str
+    version: int
+    value: dict[str, Any] | None
+    confidence: float | None
+    source_observation_id: str | None
+    sync_decision_id: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class SyncDecisionOut(BaseModel):
