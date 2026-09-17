@@ -1,0 +1,52 @@
+scenario      method          predicted     reference   decision    correct
+---------------------------------------------------------------------------
+conflicting   cams_full       bail_granted  bail_grantedupdated     True
+conflicting   cams_minus_A    bail_granted  bail_grantedupdated     True
+conflicting   cams_minus_T    bail_granted  bail_grantedupdated     True
+conflicting   cams_minus_X    bail_granted  bail_grantedupdated     True
+conflicting   cams_minus_E    bail_granted  bail_grantedupdated     True
+conflicting   fixed_authority bail_granted  bail_grantedupdated     True
+conflicting   latest_wins     bail_denied   bail_grantedupdated     False
+conflicting   majority_voting bail_granted  bail_grantedupdated     True
+delayed       cams_full       in_custody    in_custody  updated     True
+delayed       cams_minus_A    in_custody    in_custody  updated     True
+delayed       cams_minus_T    None          in_custody  retained    False
+delayed       cams_minus_X    in_custody    in_custody  updated     True
+delayed       cams_minus_E    in_custody    in_custody  updated     True
+delayed       fixed_authority in_custody    in_custody  updated     True
+delayed       latest_wins     released      in_custody  updated     False
+delayed       majority_voting in_custody    in_custody  updated     True
+noisy         cams_full       A             A           updated     True
+noisy         cams_minus_A    A             A           updated     True
+noisy         cams_minus_T    A             A           updated     True
+noisy         cams_minus_X    A             A           updated     True
+noisy         cams_minus_E    None          A           retained    False
+noisy         fixed_authority A             A           updated     True
+noisy         latest_wins     B             A           updated     False
+noisy         majority_voting A             A           updated     True
+corroboration cams_full       granted       granted     updated     True
+corroboration cams_minus_A    granted       granted     updated     True
+corroboration cams_minus_T    granted       granted     updated     True
+corroboration cams_minus_X    None          granted     retained    False
+corroboration cams_minus_E    granted       granted     updated     True
+corroboration fixed_authority granted       granted     updated     True
+corroboration latest_wins     granted       granted     updated     True
+corroboration majority_voting denied        granted     updated     False
+duplicate     cams_full       None          same        retained    False
+duplicate     cams_minus_A    None          same        retained    False
+duplicate     cams_minus_T    None          same        retained    False
+duplicate     cams_minus_X    None          same        retained    False
+duplicate     cams_minus_E    None          same        retained    False
+duplicate     fixed_authority same          same        updated     True
+duplicate     latest_wins     same          same        updated     True
+duplicate     majority_voting same          same        updated     True
+
+Accuracy by method (predicted value == reference value):
+  cams_full        80.00%
+  cams_minus_A     80.00%
+  cams_minus_T     60.00%
+  cams_minus_X     60.00%
+  cams_minus_E     60.00%
+  fixed_authority  100.00%
+  latest_wins      40.00%
+  majority_voting  80.00%
