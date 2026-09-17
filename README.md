@@ -33,6 +33,12 @@ data/cases/CASE-001/
   facts.json          # Digital Twin (current state)
   history.json        # every CAMS decision
   conflicts.json      # unresolved / abstained facts
+  uploads/            # every raw uploaded file
+  stakeholders/
+    police__police-ps12/
+      meta.json
+      documents/      # copies + extracted .txt
+      uploads_index.json
 ```
 
 Data **survives FastAPI restarts**. Observations are never removed when CAMS rejects or abstains.
@@ -47,11 +53,30 @@ Update the twin only if \(C_1 \ge \tau\) and \((C_1 - C_2) \ge \delta\). Otherwi
 
 Core code preserved: `cams.py`, `config.py`, `evaluate.py`, `baselines.py`, `testcases.py`, `metrics.py`.
 
+## OCR uploads
+
+```bash
+# PDF text layer works with pypdf alone.
+# Image OCR needs Tesseract:
+brew install tesseract   # macOS
+```
+
+Upload via the UI or `POST /cases/{id}/upload`. Files land in:
+
+```
+data/cases/{CASE_ID}/
+  uploads/
+  stakeholders/{source_type}__{source_id}/documents/
+  documents.json / observations.json / facts.json / ...
+```
+
+Watch the **terminal running uvicorn** for step-by-step CAMS calculations.
+
 ## Configure Gemini
 
 1. Copy `.env.example` to `.env`
 2. Set `GEMINI_API_KEY=your_key`
-3. Optional: `GEMINI_MODEL=gemini-2.0-flash`
+3. Optional: `GEMINI_MODEL=gemini-2.5-flash`
 
 If the key is missing or the API fails, the backend uses a **clearly labelled deterministic fallback** so the demo still works. The UI checkbox “Use rule-based fallback” forces that path.
 
@@ -64,13 +89,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 uvicorn main:app --host 127.0.0.1 --port 8000
-# open http://127.0.0.1:8000/
+# Case dashboard: http://127.0.0.1:8000/
+# API docs:       http://127.0.0.1:8000/docs
 ```
 
 ```bash
 pytest -q
+python cli.py               # interactive — same data/cases/ as the web UI
+python cli.py --smoke ID    # create case + one text observation
 python evaluate.py          # synthetic research table → results.md
-python simulate.py          # qualitative observation scenarios
+python simulate.py          # qualitative demo → data/demo_cases/ only
 ```
 
 ## Main API
@@ -89,10 +117,16 @@ python simulate.py          # qualitative observation scenarios
 | `POST` | `/cases/{id}/resync` | Re-run CAMS from stored observations |
 | `POST` | `/demo/case-001` | Built-in multi-source demo |
 
-## Frontend
+## Case dashboard (web + CLI)
 
-Plain HTML/CSS/JS at `/`. Explains Input → Extraction → Observations → CAMS → Decision → Twin → Provenance → Conflicts.  
-Uses `fetch()` only — **no CAMS logic in JavaScript**.
+Both UIs read/write the same folders under `data/cases/<case_id>/`:
+
+- **Web** — `frontend/index.html` at `/`: select/create case → twin status (facts + UNRESOLVED conflicts) → upload PDF/image/text.
+- **CLI** — `python cli.py`: same actions with live `console_log` CAMS reasoning in the terminal.
+
+Deep-link a case: `http://127.0.0.1:8000/?case=YOUR_CASE_ID`
+
+Demo/synthetic scenarios write only to `data/demo_cases/` (`POST /demo/*`, `simulate.py`).
 
 ## Why observations are never deleted
 

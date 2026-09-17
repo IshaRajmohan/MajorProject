@@ -1,144 +1,216 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NyayaOS-lite</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <title>NyayaOS — Case Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --panel: #fff;
+      --ink: #1a1d23;
+      --muted: #5c6570;
+      --line: #d8dde3;
+      --accent: #1f4e79;
+      --ok: #1b6b3a;
+      --warn: #8a5a00;
+      --warn-bg: #fff6e0;
+      --err: #9b1c1c;
+      --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 var(--sans);
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      background: var(--accent);
+      color: #fff;
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.5rem;
+      align-items: baseline;
+    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: 0.02em; }
+    header .meta { font-size: 0.85rem; opacity: 0.9; font-family: var(--mono); }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 1rem 1.25rem 2rem;
+      display: grid;
+      gap: 1rem;
+    }
+    section.panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 0.9rem 1rem 1rem;
+    }
+    section.panel h2 {
+      margin: 0 0 0.65rem;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.4rem;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: end; margin-bottom: 0.5rem; }
+    label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--muted); }
+    input, select, button, textarea {
+      font: inherit;
+      padding: 0.35rem 0.5rem;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      cursor: pointer;
+      font-weight: 560;
+    }
+    button.secondary { background: #fff; color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .hint { color: var(--muted); font-size: 0.8rem; margin: 0.25rem 0 0; }
+    .status-line {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.4rem;
+    }
+    table.facts {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    table.facts th, table.facts td {
+      text-align: left;
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    table.facts th {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 0.12rem 0.4rem;
+      border: 1px solid;
+    }
+    .badge.resolved { color: var(--ok); border-color: var(--ok); }
+    .badge.unresolved { color: var(--err); border-color: var(--err); background: #fff0f0; }
+    .conflict-box {
+      background: var(--warn-bg);
+      border: 1px solid #e0c070;
+      padding: 0.55rem 0.65rem;
+      margin-top: 0.35rem;
+      font-size: 0.85rem;
+    }
+    .conflict-box strong { color: var(--warn); }
+    .mono { font-family: var(--mono); font-size: 0.82rem; }
+    .empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }
+    .err { color: var(--err); }
+    .ok { color: var(--ok); }
+    .last-result {
+      margin-top: 0.75rem;
+      border-top: 1px solid var(--line);
+      padding-top: 0.65rem;
+      font-size: 0.85rem;
+    }
+    .last-result ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }
+    @media (max-width: 640px) {
+      .row label { flex: 1 1 100%; }
+      button { width: 100%; }
+    }
+  </style>
 </head>
 <body>
   <header>
-    <h1>NyayaOS<span>-lite</span></h1>
-    <p class="tagline">
-      Input → Gemini extraction → Observations (JSON files) → CAMS → Digital Twin → History
-    </p>
-    <p class="warn">
-      Research prototype. <strong>CAMS confidence is not legal truth.</strong>
-      Gemini only extracts quotes — it never decides conflicts.
-    </p>
+    <h1>NyayaOS Case Dashboard</h1>
+    <div class="meta" id="storageHint">data/cases/</div>
   </header>
+  <main>
+    <section class="panel" id="caseSection">
+      <h2>1. Case</h2>
+      <div class="row">
+        <label>Existing cases
+          <select id="caseSelect" style="min-width: 14rem">
+            <option value="">— select —</option>
+          </select>
+        </label>
+        <button type="button" class="secondary" id="btnRefreshCases">Refresh list</button>
+        <button type="button" id="btnOpenCase">Open</button>
+      </div>
+      <div class="row">
+        <label>New case ID (optional)
+          <input id="newCaseId" placeholder="auto if blank" style="min-width: 12rem" />
+        </label>
+        <label>Title
+          <input id="newCaseTitle" placeholder="Untitled case" style="min-width: 14rem" />
+        </label>
+        <button type="button" id="btnCreateCase">Create case</button>
+      </div>
+      <p class="status-line" id="activeCaseLine">No case selected.</p>
+      <p class="hint">Same folders as the CLI: <span class="mono">data/cases/&lt;case_id&gt;/</span>. Demo data is never written here.</p>
+    </section>
 
-  <nav class="flow" aria-label="Pipeline steps">
-    <span>1 Input</span><i>→</i>
-    <span>2 Extract</span><i>→</i>
-    <span>3 Observe</span><i>→</i>
-    <span>4 CAMS</span><i>→</i>
-    <span>5 Decision</span><i>→</i>
-    <span>6 Twin</span><i>→</i>
-    <span>7 Provenance</span><i>→</i>
-    <span>8 Conflicts</span>
-  </nav>
+    <section class="panel" id="twinSection">
+      <h2>2. Justice Twin status</h2>
+      <p class="hint" id="twinSummary">Select or create a case to load facts and conflicts.</p>
+      <div id="twinBody" class="empty">—</div>
+    </section>
 
-  <section class="card" id="sec-input">
-    <h2>1. Input — What information did we receive?</h2>
-    <p class="help">Paste legal/case text. Choose who wrote it. The backend stores the original text forever in <code>documents.json</code>.</p>
-
-    <div class="row">
-      <label>Case ID
-        <input id="caseId" value="CASE-001" />
+    <section class="panel" id="uploadSection">
+      <h2>3. Upload material</h2>
+      <div class="row">
+        <label>File (PDF, image, or .txt)
+          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.md,.text" />
+        </label>
+        <label>Source ID
+          <input id="uploadSource" value="police-ps12" />
+        </label>
+        <label>Source type
+          <select id="uploadSourceType">
+            <option value="police">police</option>
+            <option value="court">court</option>
+            <option value="witness">witness</option>
+            <option value="media">media</option>
+            <option value="forensic">forensic</option>
+            <option value="unknown">unknown</option>
+          </select>
+        </label>
+        <label>Force fallback
+          <select id="forceFallback">
+            <option value="false">No (try Gemini)</option>
+            <option value="true">Yes (rule-based)</option>
+          </select>
+        </label>
+        <button type="button" id="btnUpload">Upload → OCR → CAMS</button>
+      </div>
+      <p class="hint">Or paste plain text (same pipeline as CLI “add text”):</p>
+      <label style="width:100%">Text
+        <textarea id="pasteText" rows="4" style="width:100%; font-family: var(--mono); font-size: 0.85rem;"
+          placeholder="Charge: IPC 302&#10;Weapon: knife&#10;Location: Mumbai"></textarea>
       </label>
-      <button type="button" id="btnCreate">Create / open case</button>
-      <button type="button" id="btnReset" class="danger">Clear all saved cases</button>
-    </div>
-
-    <div class="demo-row">
-      <span>Built-in demos (run real pipeline + save JSON):</span>
-      <button type="button" data-demo="conflict" title="Media vs court charge">Conflict</button>
-      <button type="button" data-demo="delayed" title="Out-of-order witness date">Delayed</button>
-      <button type="button" data-demo="duplicate" title="Same source repeated">Duplicate</button>
-      <button type="button" data-demo="noisy" title="Low-confidence OCR">Noisy</button>
-      <button type="button" data-demo="corroboration" title="Police+forensic+court agree">Corroboration</button>
-      <button type="button" data-demo="full" class="primary">Full Demo</button>
-    </div>
-
-    <div class="row">
-      <label>Source ID
-        <input id="source" value="police-ps12" />
-      </label>
-      <label>Source type
-        <select id="sourceType">
-          <option value="police">Police</option>
-          <option value="court">Court</option>
-          <option value="forensic">Forensic</option>
-          <option value="lawyer">Lawyer</option>
-          <option value="witness">Witness</option>
-          <option value="media">Media</option>
-        </select>
-      </label>
-      <label class="check">
-        <input type="checkbox" id="forceFallback" checked />
-        Use rule-based fallback (no Gemini call)
-      </label>
-    </div>
-
-    <label class="block">Case / document text
-      <textarea id="text" rows="8">Charge: IPC 302
-Arrested on 10 April 2024
-Weapon: knife
-Injury: fracture
-Location: Mumbai</textarea>
-    </label>
-
-    <button type="button" id="btnSubmit" class="primary">Process text → extract → CAMS → save</button>
-    <p id="status" class="status" hidden></p>
-    <pre id="lastInput" class="box muted">No text submitted yet.</pre>
-  </section>
-
-  <section class="card" id="sec-extract">
-    <h2>2. Extraction — What facts did Gemini (or fallback) find?</h2>
-    <p class="help">Each fact includes an <em>evidence</em> quote copied from your text. Extraction does not choose the “true” value.</p>
-    <p id="extractNote" class="note"></p>
-    <div id="extractOut" class="list">Waiting for input…</div>
-  </section>
-
-  <section class="card" id="sec-obs">
-    <h2>3. Observations — What information did we save?</h2>
-    <p class="help">Append-only memory in <code>observations.json</code>. Conflicting and rejected claims are <strong>never deleted</strong>. Click an observation to highlight its fact.</p>
-    <div id="obsOut" class="list">No observations yet.</div>
-  </section>
-
-  <section class="card" id="sec-cams">
-    <h2>4. CAMS — How did the system compare the information?</h2>
-    <p class="help">
-      Factors: <b>A</b> authority · <b>T</b> time fit · <b>X</b> distinct-source agreement · <b>E</b> extraction confidence.
-      Expand a decision to see the calculation. Plain-English notes explain the result.
-    </p>
-    <p id="camsConfig" class="note"></p>
-    <div id="camsOut" class="list">No CAMS run yet.</div>
-  </section>
-
-  <section class="card" id="sec-decision">
-    <h2>5. Decision — Accepted or abstained?</h2>
-    <p class="help">If CAMS abstains, the Digital Twin is <strong>not</strong> overwritten; the conflict is recorded instead.</p>
-    <div id="decisionOut" class="list">No decisions yet.</div>
-  </section>
-
-  <section class="card" id="sec-twin">
-    <h2>6. Digital Twin — Current synchronized state</h2>
-    <p class="help">Only the current accepted values (<code>facts.json</code>). Click a fact to see its explanation and provenance.</p>
-    <div id="twinOut" class="list">Empty twin.</div>
-    <div id="factExplain" class="explain" hidden></div>
-  </section>
-
-  <section class="card" id="sec-prov">
-    <h2>7. History &amp; provenance — Trace a fact backwards</h2>
-    <p class="help">Current fact → CAMS decision → observation → evidence → original user text.</p>
-    <div id="provOut" class="list">No provenance yet.</div>
-  </section>
-
-  <section class="card" id="sec-conflicts">
-    <h2>8. Conflicts — Unresolved information</h2>
-    <p class="help">Facts where CAMS abstained. Competing candidates remain stored as observations.</p>
-    <div id="conflictOut" class="list">No unresolved conflicts.</div>
-  </section>
-
-  <section class="card">
-    <h2>Synthetic evaluation (research only)</h2>
-    <p class="help">From <code>evaluate.py</code>. Separate from demo JSON case files.</p>
-    <pre id="evalOut" class="box">Loading…</pre>
-  </section>
-
-  <footer>NyayaOS-lite · file persistence under <code>data/cases/</code> · observations are never deleted</footer>
-  <script src="/static/app.js"></script>
+      <div class="row" style="margin-top:0.5rem">
+        <button type="button" id="btnPasteText">Ingest text</button>
+      </div>
+      <div id="uploadResult" class="last-result" hidden></div>
+      <p class="status-line" id="uploadStatus"></p>
+    </section>
+  </main>
+  <script src="/assets/app.js"></script>
 </body>
 </html>

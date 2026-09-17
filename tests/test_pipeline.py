@@ -20,15 +20,21 @@ def tmp_repo(tmp_path: Path):
 
 
 @pytest.fixture
+def tmp_demo_repo(tmp_path: Path):
+    return FileRepository(root=tmp_path / "demo_cases")
+
+
+@pytest.fixture
 def pipe(tmp_repo):
     return Pipeline(repository=tmp_repo)
 
 
 @pytest.fixture
-def client(tmp_repo, monkeypatch):
+def client(tmp_repo, tmp_demo_repo, monkeypatch):
     monkeypatch.setattr(main_mod, "repo", tmp_repo)
     monkeypatch.setattr(main_mod, "pipeline", Pipeline(repository=tmp_repo))
-    # Also patch pipeline module default if imported elsewhere
+    monkeypatch.setattr(main_mod, "demo_repo", tmp_demo_repo)
+    monkeypatch.setattr(main_mod, "demo_pipeline", Pipeline(repository=tmp_demo_repo))
     import pipeline as pipe_mod
 
     monkeypatch.setattr(pipe_mod, "pipeline", main_mod.pipeline)
@@ -227,14 +233,23 @@ def test_api_text_pipeline(client, tmp_repo):
     assert client.post("/cases/API1/resync").status_code == 200
 
 
-def test_api_frontend_and_demo(client, tmp_repo):
-    assert client.get("/").status_code == 200
-    assert "NyayaOS" in client.get("/").text
+def test_api_root_and_demo_isolated(client, tmp_repo, tmp_demo_repo):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    assert b"Justice Twin" in r.content
+    assert b"Upload material" in r.content
+    js = client.get("/assets/app.js")
+    assert js.status_code == 200
+    assert b"/cases/" in js.content
+
     r = client.post("/demo/case-001")
     assert r.status_code == 200
     assert r.json()["case_id"] == "CASE-001"
-    assert (tmp_repo.root / "CASE-001" / "observations.json").exists()
-    obs = client.get("/cases/CASE-001/observations").json()["observations"]
+    # Demo data must land in demo_cases root, not real cases root
+    assert (tmp_demo_repo.root / "CASE-001" / "observations.json").exists()
+    assert not (tmp_repo.root / "CASE-001").exists()
+    obs = tmp_demo_repo.get_observations("CASE-001")
     assert len(obs) >= 5
 
 
@@ -242,3 +257,41 @@ def test_api_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
     assert "not legal truth" in r.json()["disclaimer"].lower()
+
+
+def test_stakeholder_folders_and_ocr_txt_upload(client, tmp_repo, tmp_path):
+    client.post("/cases", json={"case_id": "OCR1", "title": "ocr"})
+    # plain text "PDF-like" upload via .txt
+    content = b"Charge: IPC 302\nWeapon: knife\nLocation: Mumbai\n"
+    r = client.post(
+        "/cases/OCR1/upload",
+        data={
+            "source": "police-9",
+            "source_type": "police",
+            "force_fallback": "true",
+            "title": "fir.txt",
+        },
+        files={"file": ("fir.txt", content, "text/plain")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("pipeline_ran") is True
+    assert body["ocr"]["ok"] is True
+    # stakeholder folder on disk
+    sh = list((tmp_repo.root / "OCR1" / "stakeholders").iterdir())
+    assert sh, "expected stakeholder folder"
+    assert (tmp_repo.root / "OCR1" / "uploads").exists()
+    full = client.get("/cases/OCR1/full").json()
+    assert full["summary"]["documents"] >= 1
+    assert full["summary"]["observations"] >= 1
+    assert full["timeline"]
+
+
+def test_continuous_case_keeps_prior_data(pipe):
+    pipe.create_case("FLOW")
+    pipe.ingest_text("FLOW", "Charge: IPC 302\n", source="court-1", source_type="court", force_fallback=True)
+    pipe.ingest_text("FLOW", "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True)
+    view = pipe.full_case_view("FLOW")
+    assert view["summary"]["documents"] == 2
+    assert view["summary"]["observations"] >= 2
+    assert len(view["timeline"]) >= 2

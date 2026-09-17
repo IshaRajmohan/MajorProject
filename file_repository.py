@@ -9,11 +9,18 @@ Layout:
     facts.json          # Digital Twin current state only
     history.json        # every CAMS decision
     conflicts.json      # unresolved / abstained facts
+    uploads/            # every raw uploaded file for the case
+    stakeholders/
+      {source_type}__{source_id}/
+        meta.json
+        documents/      # copies of uploads + extracted .txt
+        uploads_index.json
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +29,7 @@ from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent
 DATA_ROOT = ROOT / "data" / "cases"
+DEMO_DATA_ROOT = ROOT / "data" / "demo_cases"
 
 _lock = threading.RLock()
 
@@ -36,6 +44,15 @@ def _json_default(obj: Any) -> Any:
     raise TypeError(f"Not JSON serializable: {type(obj)}")
 
 
+def _safe_segment(value: str, fallback: str = "unknown") -> str:
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", (value or fallback).strip())[:80]
+    return s or fallback
+
+
+def stakeholder_key(source_type: str, source_id: str) -> str:
+    return f"{_safe_segment(source_type)}__{_safe_segment(source_id)}"
+
+
 class FileRepository:
     def __init__(self, root: Optional[Path] = None) -> None:
         self.root = Path(root) if root else DATA_ROOT
@@ -44,10 +61,98 @@ class FileRepository:
     def _case_dir(self, case_id: str) -> Path:
         d = self.root / case_id
         d.mkdir(parents=True, exist_ok=True)
+        (d / "stakeholders").mkdir(exist_ok=True)
+        (d / "uploads").mkdir(exist_ok=True)
         return d
 
     def _path(self, case_id: str, name: str) -> Path:
         return self._case_dir(case_id) / name
+
+    def stakeholder_dir(self, case_id: str, source_type: str, source_id: str) -> Path:
+        key = stakeholder_key(source_type, source_id)
+        d = self._case_dir(case_id) / "stakeholders" / key
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "documents").mkdir(exist_ok=True)
+        meta_path = d / "meta.json"
+        if not meta_path.exists():
+            meta = {
+                "stakeholder_key": key,
+                "source_type": source_type,
+                "source_id": source_id,
+                "created_at": _utcnow(),
+            }
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        return d
+
+    def list_stakeholders(self, case_id: str) -> List[Dict[str, Any]]:
+        root = self._case_dir(case_id) / "stakeholders"
+        out: List[Dict[str, Any]] = []
+        if not root.exists():
+            return out
+        for p in sorted(root.iterdir()):
+            if not p.is_dir():
+                continue
+            meta_path = p / "meta.json"
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            else:
+                meta = {"stakeholder_key": p.name}
+            docs = sorted((p / "documents").glob("*")) if (p / "documents").exists() else []
+            meta["document_files"] = [x.name for x in docs]
+            out.append(meta)
+        return out
+
+    def save_upload(
+        self,
+        case_id: str,
+        source_type: str,
+        source_id: str,
+        filename: str,
+        data: bytes,
+        extracted_text: str = "",
+        extra_meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Save raw upload under case/uploads and stakeholder/documents."""
+        with _lock:
+            self.ensure_case(case_id)
+            safe_name = _safe_segment(Path(filename).name, "upload.bin")
+            uid = uuid4().hex[:10]
+            stored_name = f"{uid}__{safe_name}"
+
+            case_upload = self._case_dir(case_id) / "uploads" / stored_name
+            case_upload.write_bytes(data)
+
+            sh = self.stakeholder_dir(case_id, source_type, source_id)
+            sh_doc = sh / "documents" / stored_name
+            sh_doc.write_bytes(data)
+
+            text_path = None
+            if extracted_text:
+                text_path = sh / "documents" / f"{uid}__extracted.txt"
+                text_path.write_text(extracted_text, encoding="utf-8")
+
+            record = {
+                "upload_id": uid,
+                "original_filename": filename,
+                "stored_filename": stored_name,
+                "case_upload_path": str(case_upload),
+                "stakeholder_path": str(sh_doc),
+                "extracted_text_path": str(text_path) if text_path else None,
+                "source_type": source_type,
+                "source_id": source_id,
+                "bytes": len(data),
+                "saved_at": _utcnow(),
+                **(extra_meta or {}),
+            }
+            index_path = sh / "uploads_index.json"
+            index = []
+            if index_path.exists():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            index.append(record)
+            index_path.write_text(
+                json.dumps(index, indent=2, default=_json_default), encoding="utf-8"
+            )
+            return record
 
     def _read(self, case_id: str, name: str, default: Any) -> Any:
         path = self._path(case_id, name)
@@ -110,11 +215,14 @@ class FileRepository:
             return self.get_case(case_id)
         return self.create_case(case_id=case_id, title=title or case_id, description=description)
 
-    # ---- documents (append-only) ----
-
     def append_document(self, case_id: str, doc: Dict[str, Any]) -> Dict[str, Any]:
         with _lock:
             self.ensure_case(case_id)
+            self.stakeholder_dir(
+                case_id,
+                doc.get("source_type") or "unknown",
+                doc.get("source") or doc.get("source_id") or "unknown",
+            )
             docs = self._read(case_id, "documents.json", [])
             docs.append(doc)
             self._write(case_id, "documents.json", docs)
@@ -130,8 +238,6 @@ class FileRepository:
                 return d
         return None
 
-    # ---- observations (append-only — NEVER delete) ----
-
     def append_observations(self, case_id: str, observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         with _lock:
             self.ensure_case(case_id)
@@ -146,8 +252,6 @@ class FileRepository:
         if fact_key is not None:
             obs = [o for o in obs if o.get("fact_key") == fact_key]
         return obs
-
-    # ---- facts (Digital Twin current state — may update in place) ----
 
     def get_facts(self, case_id: str) -> Dict[str, Any]:
         self.ensure_case(case_id)
@@ -167,8 +271,6 @@ class FileRepository:
             return None
         return f.get("value")
 
-    # ---- history (append-only) ----
-
     def append_history(self, case_id: str, entry: Dict[str, Any]) -> Dict[str, Any]:
         with _lock:
             self.ensure_case(case_id)
@@ -180,8 +282,6 @@ class FileRepository:
     def get_history(self, case_id: str) -> List[Dict[str, Any]]:
         self.ensure_case(case_id)
         return list(self._read(case_id, "history.json", []))
-
-    # ---- conflicts ----
 
     def get_conflicts(self, case_id: str) -> Dict[str, Any]:
         self.ensure_case(case_id)
@@ -203,7 +303,6 @@ class FileRepository:
                 self._write(case_id, "conflicts.json", conflicts)
 
     def delete_case_dir(self, case_id: str) -> None:
-        """Test helper only — removes a case folder. Not used by the API for observations."""
         import shutil
 
         d = self.root / case_id
@@ -211,7 +310,6 @@ class FileRepository:
             shutil.rmtree(d)
 
     def reset_all(self) -> None:
-        """Test / demo helper — wipe all cases under this root."""
         import shutil
 
         with _lock:
@@ -220,5 +318,5 @@ class FileRepository:
             self.root.mkdir(parents=True, exist_ok=True)
 
 
-# Default singleton (production data path)
 repo = FileRepository()
+demo_repo = FileRepository(root=DEMO_DATA_ROOT)

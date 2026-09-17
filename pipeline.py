@@ -1,6 +1,6 @@
 """
 End-to-end pipeline:
-  text → Gemini (or fallback) → observations (JSON files) → CAMS → Digital Twin → history/conflicts
+  text/OCR → Gemini (or fallback) → observations (JSON files) → CAMS → Digital Twin → history/conflicts
 """
 
 from __future__ import annotations
@@ -11,9 +11,11 @@ from uuid import uuid4
 
 from cams import synchronize
 from config import DELTA, TAU, WEIGHTS
+import console_log as clog
 from file_repository import FileRepository, repo as default_repo
 from gemini_extractor import extract_from_text
 from models import Observation
+from ocr import ocr_file
 
 
 def _parse_dt(value: Any, fallback: Optional[datetime] = None) -> datetime:
@@ -30,7 +32,6 @@ def _parse_dt(value: Any, fallback: Optional[datetime] = None) -> datetime:
 
 
 def _obs_from_dict(d: Dict[str, Any]) -> Observation:
-    """Load a stored observation dict into the CAMS Observation model."""
     return Observation(
         observation_id=d.get("observation_id") or str(uuid4()),
         case_id=d["case_id"],
@@ -50,7 +51,6 @@ def _obs_from_dict(d: Dict[str, Any]) -> Observation:
 
 
 def _plain_english(decision: Any, top_factors: Optional[Dict[str, float]] = None) -> str:
-    """Human-readable reason from CAMS decision (no JS CAMS logic)."""
     parts: List[str] = []
     if decision.decided:
         parts.append(f"The system ACCEPTED “{decision.accepted_value}” for {decision.fact_key}.")
@@ -68,12 +68,10 @@ def _plain_english(decision: Any, top_factors: Optional[Dict[str, float]] = None
         parts.append("All competing observations are kept for provenance.")
 
     if top_factors:
-        a, t, x, e = (
-            top_factors.get("source_authority"),
-            top_factors.get("temporal_consistency"),
-            top_factors.get("cross_source_corroboration"),
-            top_factors.get("extraction_reliability"),
-        )
+        a = top_factors.get("source_authority")
+        t = top_factors.get("temporal_consistency")
+        x = top_factors.get("cross_source_corroboration")
+        e = top_factors.get("extraction_reliability")
         if a is not None and a >= 0.8:
             parts.append("This source type is considered more authoritative for this fact (high A).")
         if a is not None and a <= 0.4:
@@ -109,7 +107,12 @@ class Pipeline:
         title: str = "Untitled case",
         description: str = "",
     ) -> Dict[str, Any]:
-        return self.repo.create_case(case_id=case_id, title=title, description=description)
+        meta = self.repo.create_case(case_id=case_id, title=title, description=description)
+        clog.banner("CREATE CASE", meta["case_id"])
+        clog.kv("title", meta.get("title"))
+        clog.kv("folder", str(self.repo.root / meta["case_id"]))
+        clog.done("case folder ready (stakeholders/ + uploads/ created)")
+        return meta
 
     def ingest_text(
         self,
@@ -119,15 +122,34 @@ class Pipeline:
         source_type: str = "unknown",
         title: str = "",
         force_fallback: bool = False,
+        ocr_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Full pipeline for POST /cases/{id}/text
-        """
         self.repo.ensure_case(case_id)
         now = datetime.now(timezone.utc)
         document_id = str(uuid4())
 
+        clog.banner("INPUT", case_id)
+        clog.kv("source", f"{source_type} / {source}")
+        clog.kv("chars", len(text or ""))
+        clog.kv("title", title or "(none)")
+        if ocr_meta:
+            clog.kv("came_from_ocr", ocr_meta.get("method"))
+            clog.detail(ocr_meta.get("note") or "")
+
+        previous_obs = len(self.repo.get_observations(case_id))
+        previous_docs = len(self.repo.get_documents(case_id))
+        clog.step(f"Case already has {previous_docs} documents and {previous_obs} observations (kept)")
+
+        clog.banner("EXTRACTION (Gemini or fallback)", case_id)
+        clog.step("Gemini extracts facts + quotes only — it does NOT resolve conflicts")
         extraction = extract_from_text(text, source_type=source_type, force_fallback=force_fallback)
+        clog.kv("extractor", extraction["extractor"])
+        clog.detail(extraction["note"])
+        for f in extraction["facts"]:
+            clog.detail(
+                f"fact {f['fact_key']} = {f['value']!r}  E={f.get('extraction_confidence')}  "
+                f"evidence={f.get('evidence')!r}"
+            )
 
         doc = {
             "document_id": document_id,
@@ -140,8 +162,15 @@ class Pipeline:
             "ingestion_time": now.isoformat(),
             "extractor": extraction["extractor"],
             "extractor_note": extraction["note"],
+            "ocr": ocr_meta,
         }
         self.repo.append_document(case_id, doc)
+        clog.banner("FILE STORAGE", case_id)
+        clog.step("Appended document to documents.json (never deletes old ones)")
+        clog.kv(
+            "stakeholder_folder",
+            str(self.repo.stakeholder_dir(case_id, source_type, source)),
+        )
 
         new_obs: List[Dict[str, Any]] = []
         for fact in extraction["facts"]:
@@ -160,7 +189,7 @@ class Pipeline:
                 "ingestion_time": now.isoformat(),
                 "evidence": fact.get("evidence") or "",
                 "extraction_confidence": conf,
-                "extraction_reliability": conf,  # CAMS field
+                "extraction_reliability": conf,
                 "status": "recorded",
                 "document_id": document_id,
             }
@@ -168,14 +197,15 @@ class Pipeline:
 
         if new_obs:
             self.repo.append_observations(case_id, new_obs)
+            clog.step(f"Appended {len(new_obs)} observations to observations.json")
+            clog.kv("total_observations_now", len(self.repo.get_observations(case_id)))
 
-        # Run CAMS per affected fact_key using ALL stored observations
         fact_keys = sorted({o["fact_key"] for o in new_obs}) or []
         decisions = []
         for fk in fact_keys:
             decisions.append(self._run_cams_for_fact(case_id, fk, trigger_document_id=document_id))
 
-        return {
+        result = {
             "case_id": case_id,
             "document": doc,
             "extraction": {
@@ -188,7 +218,82 @@ class Pipeline:
             "facts": self.repo.get_facts(case_id),
             "conflicts": self.repo.get_conflicts(case_id),
             "history_tail": self.repo.get_history(case_id)[-len(decisions) :] if decisions else [],
+            "case_view": self.full_case_view(case_id),
         }
+        clog.banner("CASE SNAPSHOT AFTER THIS UPDATE", case_id)
+        clog.kv("documents", len(self.repo.get_documents(case_id)))
+        clog.kv("observations", len(self.repo.get_observations(case_id)))
+        clog.kv("twin_facts", list(self.repo.get_facts(case_id).keys()))
+        clog.kv("conflicts", list(self.repo.get_conflicts(case_id).keys()) or "(none)")
+        clog.done("pipeline finished — prior case data preserved")
+        return result
+
+    def ingest_upload(
+        self,
+        case_id: str,
+        filename: str,
+        data: bytes,
+        source: str = "user",
+        source_type: str = "unknown",
+        content_type: Optional[str] = None,
+        force_fallback: bool = False,
+        title: str = "",
+    ) -> Dict[str, Any]:
+        clog.banner("UPLOAD / OCR", case_id)
+        clog.kv("filename", filename)
+        clog.kv("bytes", len(data))
+        clog.kv("content_type", content_type or "(unknown)")
+        clog.kv("stakeholder", f"{source_type}/{source}")
+
+        ocr = ocr_file(data, filename=filename, content_type=content_type)
+        clog.kv("ocr_ok", ocr.get("ok"))
+        clog.kv("ocr_method", ocr.get("method"))
+        clog.detail(ocr.get("note") or "")
+        if ocr.get("text"):
+            preview = ocr["text"][:240].replace("\n", " / ")
+            clog.detail(f"text preview: {preview}{'…' if len(ocr['text']) > 240 else ''}")
+
+        upload_record = self.repo.save_upload(
+            case_id=case_id,
+            source_type=source_type,
+            source_id=source,
+            filename=filename,
+            data=data,
+            extracted_text=ocr.get("text") or "",
+            extra_meta={"ocr_method": ocr.get("method"), "ocr_note": ocr.get("note")},
+        )
+        clog.step("Saved raw file under case/uploads and stakeholders/.../documents")
+        clog.kv("saved_as", upload_record.get("stored_filename"))
+
+        if not ocr.get("ok"):
+            clog.done("OCR produced no text — file stored; paste text to continue extraction")
+            return {
+                "case_id": case_id,
+                "ocr": ocr,
+                "upload": upload_record,
+                "pipeline_ran": False,
+                "message": ocr.get("note"),
+                "case_view": self.full_case_view(case_id),
+            }
+
+        result = self.ingest_text(
+            case_id=case_id,
+            text=ocr["text"],
+            source=source,
+            source_type=source_type,
+            title=title or f"OCR:{filename}",
+            force_fallback=force_fallback,
+            ocr_meta={
+                "method": ocr.get("method"),
+                "note": ocr.get("note"),
+                "filename": filename,
+                "upload": upload_record,
+            },
+        )
+        result["ocr"] = ocr
+        result["upload"] = upload_record
+        result["pipeline_ran"] = True
+        return result
 
     def _run_cams_for_fact(
         self,
@@ -201,6 +306,14 @@ class Pipeline:
         observations = [_obs_from_dict(o) for o in stored]
         timeline = [_parse_dt(o.get("event_time")) for o in self.repo.get_observations(case_id)]
         previous = self.repo.get_fact_value(case_id, fact_key)
+
+        clog.banner(f"CAMS — fact `{fact_key}`", case_id)
+        clog.kv("observations_for_fact", len(stored))
+        clog.kv("previous_twin_value", previous)
+        clog.kv("weights", WEIGHTS)
+        clog.kv("tau", TAU)
+        clog.kv("delta", DELTA)
+        clog.step("Scoring each candidate with C = wA·A + wT·T + wX·X + wE·E")
 
         decision = synchronize(
             case_id=case_id,
@@ -218,10 +331,17 @@ class Pipeline:
         if decision.candidates:
             supporting = list(decision.candidates[0].supporting_observation_ids)
             top_factors = decision.candidates[0].factors.model_dump()
+            clog.step("Candidates (highest C first):")
+            for c in decision.candidates:
+                clog.detail(clog.cams_candidate_line(c.value, c.confidence, c.factors.model_dump()))
 
         explanation = _plain_english(decision, top_factors)
+        clog.kv("C1", decision.C1)
+        clog.kv("C2", decision.C2)
+        clog.kv("margin", decision.margin)
+        clog.kv("decision", "ACCEPTED" if decision.decided else "ABSTAINED")
+        clog.detail(explanation)
 
-        # Update Digital Twin ONLY if decided
         if decision.decided:
             provenance = []
             by_id = {o["observation_id"]: o for o in stored}
@@ -252,8 +372,8 @@ class Pipeline:
                 },
             )
             self.repo.clear_conflict(case_id, fact_key)
+            clog.step("Digital Twin updated in facts.json")
         else:
-            # Do NOT overwrite current fact — mark conflict / unresolved
             competing = []
             for c in decision.candidates:
                 competing.append(
@@ -281,7 +401,6 @@ class Pipeline:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
-            # If fact never existed, record open placeholder without inventing a value
             facts = self.repo.get_facts(case_id)
             if fact_key not in facts:
                 self.repo.set_fact(
@@ -297,9 +416,7 @@ class Pipeline:
                         "provenance": [],
                     },
                 )
-            elif facts[fact_key].get("status") == "resolved":
-                # Keep resolved value but note contested via conflicts.json
-                pass
+            clog.step("ABSTAIN: twin value NOT overwritten; conflict stored in conflicts.json")
 
         history_entry = {
             "history_id": str(uuid4()),
@@ -325,18 +442,21 @@ class Pipeline:
             "trigger_observation_id": trigger_observation_id,
         }
         self.repo.append_history(case_id, history_entry)
+        clog.step("Appended decision to history.json")
         return history_entry
 
     def resync(self, case_id: str) -> Dict[str, Any]:
-        """Re-run CAMS for every fact_key present in observations."""
         self.repo.ensure_case(case_id)
         keys = sorted({o["fact_key"] for o in self.repo.get_observations(case_id)})
+        clog.banner("RESYNC ALL FACTS FROM STORED OBSERVATIONS", case_id)
+        clog.kv("fact_keys", keys)
         decisions = [self._run_cams_for_fact(case_id, fk) for fk in keys]
         return {
             "case_id": case_id,
             "decisions": decisions,
             "facts": self.repo.get_facts(case_id),
             "conflicts": self.repo.get_conflicts(case_id),
+            "case_view": self.full_case_view(case_id),
         }
 
     def case_snapshot(self, case_id: str) -> Dict[str, Any]:
@@ -348,12 +468,74 @@ class Pipeline:
             "observation_count": len(self.repo.get_observations(case_id)),
             "document_count": len(self.repo.get_documents(case_id)),
             "history_count": len(self.repo.get_history(case_id)),
+            "stakeholders": self.repo.list_stakeholders(case_id),
+        }
+
+    def full_case_view(self, case_id: str) -> Dict[str, Any]:
+        """
+        Continuous case board: everything for this case_id, chronological.
+        """
+        self.repo.ensure_case(case_id)
+        docs = self.repo.get_documents(case_id)
+        obs = self.repo.get_observations(case_id)
+        history = self.repo.get_history(case_id)
+        facts = self.repo.get_facts(case_id)
+        conflicts = self.repo.get_conflicts(case_id)
+        stakeholders = self.repo.list_stakeholders(case_id)
+
+        timeline = []
+        for d in docs:
+            timeline.append(
+                {
+                    "kind": "document",
+                    "at": d.get("ingestion_time"),
+                    "source": d.get("source") or d.get("source_id"),
+                    "source_type": d.get("source_type"),
+                    "title": d.get("title"),
+                    "document_id": d.get("document_id"),
+                    "preview": (d.get("text") or "")[:280],
+                    "ocr": d.get("ocr"),
+                    "extractor": d.get("extractor"),
+                }
+            )
+        for h in history:
+            timeline.append(
+                {
+                    "kind": "cams_decision",
+                    "at": h.get("timestamp"),
+                    "fact_key": h.get("fact_key"),
+                    "decision": h.get("decision"),
+                    "selected_value": h.get("selected_value"),
+                    "previous_value": h.get("previous_value"),
+                    "C1": h.get("C1"),
+                    "C2": h.get("C2"),
+                    "margin": h.get("margin"),
+                    "explanation": h.get("explanation"),
+                }
+            )
+        timeline.sort(key=lambda x: x.get("at") or "")
+
+        return {
+            "case": self.repo.get_case(case_id),
+            "summary": {
+                "documents": len(docs),
+                "observations": len(obs),
+                "history_events": len(history),
+                "twin_facts": len(facts),
+                "conflicts": len(conflicts),
+                "stakeholders": len(stakeholders),
+            },
+            "twin": facts,
+            "conflicts": conflicts,
+            "documents": docs,
+            "observations": obs,
+            "history": history,
+            "stakeholders": stakeholders,
+            "timeline": timeline,
+            "storage_hint": str(self.repo.root / case_id),
         }
 
     def provenance(self, case_id: str) -> Dict[str, Any]:
-        """
-        Trace each current fact → history → observations → evidence → original text.
-        """
         facts = self.repo.get_facts(case_id)
         obs_by_id = {o["observation_id"]: o for o in self.repo.get_observations(case_id)}
         docs_by_id = {d["document_id"]: d for d in self.repo.get_documents(case_id)}
