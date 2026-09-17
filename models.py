@@ -23,6 +23,10 @@ class Observation(BaseModel):
     ingestion_time: datetime = Field(default_factory=_utcnow)
     extraction_reliability: float = Field(ge=0.0, le=1.0)
     observation_id: str = Field(default_factory=lambda: str(uuid4()))
+    # Persistence / provenance fields (ignored by CAMS math except reliability)
+    evidence: str = ""
+    status: str = "recorded"
+    document_id: Optional[str] = None
 
 
 class ObservationIn(BaseModel):
@@ -35,6 +39,17 @@ class ObservationIn(BaseModel):
     event_time: datetime
     ingestion_time: Optional[datetime] = None
     extraction_reliability: float = Field(ge=0.0, le=1.0, default=0.8)
+    evidence: str = ""
+
+
+class TextIn(BaseModel):
+    """Plain text submission for Gemini extraction + CAMS pipeline."""
+
+    text: str
+    source: str = "user"
+    source_type: str = "unknown"
+    title: Optional[str] = None
+    force_fallback: bool = False
 
 
 class FactorBreakdown(BaseModel):
@@ -81,3 +96,70 @@ class FactState(BaseModel):
 class CaseState(BaseModel):
     case_id: str
     facts: Dict[str, FactState] = Field(default_factory=dict)
+
+
+# --- End-to-end pipeline models (additive; does not alter CAMS Observation) ---
+
+
+class CaseCreate(BaseModel):
+    case_id: Optional[str] = None
+    title: str = "Untitled case"
+    description: str = ""
+
+
+class CaseMeta(BaseModel):
+    case_id: str
+    title: str = "Untitled case"
+    description: str = ""
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class DocumentIn(BaseModel):
+    source_id: str
+    source_type: str
+    text: str
+    title: Optional[str] = None
+    event_time: Optional[datetime] = None
+    extraction_reliability: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class DocumentRecord(BaseModel):
+    document_id: str = Field(default_factory=lambda: str(uuid4()))
+    case_id: str
+    source_id: str
+    source_type: str
+    title: str = ""
+    raw_text: str
+    cleaned_text: str = ""
+    event_time: Optional[datetime] = None
+    ingestion_time: datetime = Field(default_factory=_utcnow)
+    extraction_reliability: float = 0.8
+
+
+class ExtractedFact(BaseModel):
+    fact_key: str
+    value: Any
+    event_time: Optional[datetime] = None
+    confidence: float = 0.8
+    evidence_span: str = ""
+
+
+class SyncHistoryEntry(BaseModel):
+    history_id: str = Field(default_factory=lambda: str(uuid4()))
+    case_id: str
+    fact_key: str
+    timestamp: datetime = Field(default_factory=_utcnow)
+    decided: bool
+    selected_value: Optional[Any] = None
+    previous_value: Optional[Any] = None
+    unresolved: bool
+    C1: Optional[float] = None
+    C2: Optional[float] = None
+    margin: Optional[float] = None
+    tau: float
+    delta: float
+    message: str
+    supporting_observation_ids: List[str] = Field(default_factory=list)
+    candidates: List[CandidateScore] = Field(default_factory=list)
+    trigger_observation_id: Optional[str] = None
+    trigger_document_id: Optional[str] = None

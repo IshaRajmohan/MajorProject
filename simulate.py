@@ -25,11 +25,16 @@ def _wait_for_server(timeout: float = 15.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            r = requests.get(f"{BASE}/", timeout=0.5)
+            r = requests.get(f"{BASE}/api/health", timeout=0.5)
             if r.status_code == 200:
                 return True
         except requests.RequestException:
-            time.sleep(0.3)
+            try:
+                r = requests.get(f"{BASE}/docs", timeout=0.5)
+                if r.status_code == 200:
+                    return True
+            except requests.RequestException:
+                time.sleep(0.3)
     return False
 
 

@@ -111,3 +111,64 @@ def ablate_weights(zero_factor: str, base: Dict[str, float] | None = None) -> Di
     for k in w:
         w[k] = w[k] / total
     return w
+
+
+# Role-based view permissions (demo only — not real auth).
+# visible_facts: None means all facts; list means allow-list.
+# show_provenance / show_confidence / show_unresolved / show_raw_observations
+ROLE_PERMISSIONS: Dict[str, Dict] = {
+    "court": {
+        "visible_facts": None,
+        "show_provenance": True,
+        "show_confidence": True,
+        "show_unresolved": True,
+        "show_raw_observations": True,
+        "show_history": True,
+    },
+    "police": {
+        "visible_facts": [
+            "arrest_date",
+            "charge",
+            "weapon_type",
+            "incident_location",
+            "victim_injury",
+            "bail_status",
+        ],
+        "show_provenance": True,
+        "show_confidence": True,
+        "show_unresolved": True,
+        "show_raw_observations": True,
+        "show_history": True,
+    },
+    "lawyer": {
+        "visible_facts": [
+            "charge",
+            "arrest_date",
+            "bail_status",
+            "incident_location",
+            "weapon_type",
+            "victim_injury",
+        ],
+        "show_provenance": True,
+        "show_confidence": True,
+        "show_unresolved": True,
+        "show_raw_observations": False,
+        "show_history": True,
+    },
+    "forensic": {
+        "visible_facts": ["victim_injury", "weapon_type", "incident_location"],
+        "show_provenance": True,
+        "show_confidence": True,
+        "show_unresolved": True,
+        "show_raw_observations": True,
+        "show_history": False,
+    },
+    "citizen": {
+        "visible_facts": ["charge", "bail_status", "incident_location"],
+        "show_provenance": False,
+        "show_confidence": False,
+        "show_unresolved": False,
+        "show_raw_observations": False,
+        "show_history": False,
+    },
+}

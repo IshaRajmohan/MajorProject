@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NyayaOS-lite</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>NyayaOS<span>-lite</span></h1>
+    <p class="tagline">
+      Input → Gemini extraction → Observations (JSON files) → CAMS → Digital Twin → History
+    </p>
+    <p class="warn">
+      Research prototype. <strong>CAMS confidence is not legal truth.</strong>
+      Gemini only extracts quotes — it never decides conflicts.
+    </p>
+  </header>
+
+  <nav class="flow" aria-label="Pipeline steps">
+    <span>1 Input</span><i>→</i>
+    <span>2 Extract</span><i>→</i>
+    <span>3 Observe</span><i>→</i>
+    <span>4 CAMS</span><i>→</i>
+    <span>5 Decision</span><i>→</i>
+    <span>6 Twin</span><i>→</i>
+    <span>7 Provenance</span><i>→</i>
+    <span>8 Conflicts</span>
+  </nav>
+
+  <section class="card" id="sec-input">
+    <h2>1. Input — What information did we receive?</h2>
+    <p class="help">Paste legal/case text. Choose who wrote it. The backend stores the original text forever in <code>documents.json</code>.</p>
+
+    <div class="row">
+      <label>Case ID
+        <input id="caseId" value="CASE-001" />
+      </label>
+      <button type="button" id="btnCreate">Create / open case</button>
+      <button type="button" id="btnReset" class="danger">Clear all saved cases</button>
+    </div>
+
+    <div class="demo-row">
+      <span>Built-in demos (run real pipeline + save JSON):</span>
+      <button type="button" data-demo="conflict" title="Media vs court charge">Conflict</button>
+      <button type="button" data-demo="delayed" title="Out-of-order witness date">Delayed</button>
+      <button type="button" data-demo="duplicate" title="Same source repeated">Duplicate</button>
+      <button type="button" data-demo="noisy" title="Low-confidence OCR">Noisy</button>
+      <button type="button" data-demo="corroboration" title="Police+forensic+court agree">Corroboration</button>
+      <button type="button" data-demo="full" class="primary">Full Demo</button>
+    </div>
+
+    <div class="row">
+      <label>Source ID
+        <input id="source" value="police-ps12" />
+      </label>
+      <label>Source type
+        <select id="sourceType">
+          <option value="police">Police</option>
+          <option value="court">Court</option>
+          <option value="forensic">Forensic</option>
+          <option value="lawyer">Lawyer</option>
+          <option value="witness">Witness</option>
+          <option value="media">Media</option>
+        </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="forceFallback" checked />
+        Use rule-based fallback (no Gemini call)
+      </label>
+    </div>
+
+    <label class="block">Case / document text
+      <textarea id="text" rows="8">Charge: IPC 302
+Arrested on 10 April 2024
+Weapon: knife
+Injury: fracture
+Location: Mumbai</textarea>
+    </label>
+
+    <button type="button" id="btnSubmit" class="primary">Process text → extract → CAMS → save</button>
+    <p id="status" class="status" hidden></p>
+    <pre id="lastInput" class="box muted">No text submitted yet.</pre>
+  </section>
+
+  <section class="card" id="sec-extract">
+    <h2>2. Extraction — What facts did Gemini (or fallback) find?</h2>
+    <p class="help">Each fact includes an <em>evidence</em> quote copied from your text. Extraction does not choose the “true” value.</p>
+    <p id="extractNote" class="note"></p>
+    <div id="extractOut" class="list">Waiting for input…</div>
+  </section>
+
+  <section class="card" id="sec-obs">
+    <h2>3. Observations — What information did we save?</h2>
+    <p class="help">Append-only memory in <code>observations.json</code>. Conflicting and rejected claims are <strong>never deleted</strong>. Click an observation to highlight its fact.</p>
+    <div id="obsOut" class="list">No observations yet.</div>
+  </section>
+
+  <section class="card" id="sec-cams">
+    <h2>4. CAMS — How did the system compare the information?</h2>
+    <p class="help">
+      Factors: <b>A</b> authority · <b>T</b> time fit · <b>X</b> distinct-source agreement · <b>E</b> extraction confidence.
+      Expand a decision to see the calculation. Plain-English notes explain the result.
+    </p>
+    <p id="camsConfig" class="note"></p>
+    <div id="camsOut" class="list">No CAMS run yet.</div>
+  </section>
+
+  <section class="card" id="sec-decision">
+    <h2>5. Decision — Accepted or abstained?</h2>
+    <p class="help">If CAMS abstains, the Digital Twin is <strong>not</strong> overwritten; the conflict is recorded instead.</p>
+    <div id="decisionOut" class="list">No decisions yet.</div>
+  </section>
+
+  <section class="card" id="sec-twin">
+    <h2>6. Digital Twin — Current synchronized state</h2>
+    <p class="help">Only the current accepted values (<code>facts.json</code>). Click a fact to see its explanation and provenance.</p>
+    <div id="twinOut" class="list">Empty twin.</div>
+    <div id="factExplain" class="explain" hidden></div>
+  </section>
+
+  <section class="card" id="sec-prov">
+    <h2>7. History &amp; provenance — Trace a fact backwards</h2>
+    <p class="help">Current fact → CAMS decision → observation → evidence → original user text.</p>
+    <div id="provOut" class="list">No provenance yet.</div>
+  </section>
+
+  <section class="card" id="sec-conflicts">
+    <h2>8. Conflicts — Unresolved information</h2>
+    <p class="help">Facts where CAMS abstained. Competing candidates remain stored as observations.</p>
+    <div id="conflictOut" class="list">No unresolved conflicts.</div>
+  </section>
+
+  <section class="card">
+    <h2>Synthetic evaluation (research only)</h2>
+    <p class="help">From <code>evaluate.py</code>. Separate from demo JSON case files.</p>
+    <pre id="evalOut" class="box">Loading…</pre>
+  </section>
+
+  <footer>NyayaOS-lite · file persistence under <code>data/cases/</code> · observations are never deleted</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

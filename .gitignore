@@ -1,0 +1,7 @@
+# Local secrets and persisted case data (never commit)
+.env
+data/cases/
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
