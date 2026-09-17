@@ -1,0 +1,165 @@
+=== scenario: conflicting (reference=bail_granted) ===
+-- tau sweep (delta=0.1) --
+  tau=0.30  decision=updated    c1=0.85 <-- boundary
+  tau=0.35  decision=updated    c1=0.85
+  tau=0.40  decision=updated    c1=0.85
+  tau=0.45  decision=updated    c1=0.85
+  tau=0.50  decision=updated    c1=0.85
+  tau=0.55  decision=updated    c1=0.85
+  tau=0.60  decision=updated    c1=0.85
+  tau=0.65  decision=updated    c1=0.85
+  tau=0.70  decision=updated    c1=0.85
+  tau=0.75  decision=updated    c1=0.85
+  tau=0.80  decision=updated    c1=0.85
+  tau=0.85  decision=updated    c1=0.85
+  tau=0.90  decision=retained   c1=0.85 <-- boundary
+-- delta sweep (tau=0.6) --
+  delta=0.00  decision=updated    margin(c1-c2)=0.48 <-- boundary
+  delta=0.02  decision=updated    margin(c1-c2)=0.48
+  delta=0.04  decision=updated    margin(c1-c2)=0.48
+  delta=0.06  decision=updated    margin(c1-c2)=0.48
+  delta=0.08  decision=updated    margin(c1-c2)=0.48
+  delta=0.10  decision=updated    margin(c1-c2)=0.48
+  delta=0.12  decision=updated    margin(c1-c2)=0.48
+  delta=0.14  decision=updated    margin(c1-c2)=0.48
+  delta=0.16  decision=updated    margin(c1-c2)=0.48
+  delta=0.18  decision=updated    margin(c1-c2)=0.48
+  delta=0.20  decision=updated    margin(c1-c2)=0.48
+  delta=0.22  decision=updated    margin(c1-c2)=0.48
+  delta=0.24  decision=updated    margin(c1-c2)=0.48
+  delta=0.26  decision=updated    margin(c1-c2)=0.48
+  delta=0.28  decision=updated    margin(c1-c2)=0.48
+  delta=0.30  decision=updated    margin(c1-c2)=0.48
+
+=== scenario: delayed (reference=in_custody) ===
+-- tau sweep (delta=0.1) --
+  tau=0.30  decision=updated    c1=0.8 <-- boundary
+  tau=0.35  decision=updated    c1=0.8
+  tau=0.40  decision=updated    c1=0.8
+  tau=0.45  decision=updated    c1=0.8
+  tau=0.50  decision=updated    c1=0.8
+  tau=0.55  decision=updated    c1=0.8
+  tau=0.60  decision=updated    c1=0.8
+  tau=0.65  decision=updated    c1=0.8
+  tau=0.70  decision=updated    c1=0.8
+  tau=0.75  decision=updated    c1=0.8
+  tau=0.80  decision=updated    c1=0.8
+  tau=0.85  decision=retained   c1=0.8 <-- boundary
+  tau=0.90  decision=retained   c1=0.8
+-- delta sweep (tau=0.6) --
+  delta=0.00  decision=updated    margin(c1-c2)=0.24 <-- boundary
+  delta=0.02  decision=updated    margin(c1-c2)=0.24
+  delta=0.04  decision=updated    margin(c1-c2)=0.24
+  delta=0.06  decision=updated    margin(c1-c2)=0.24
+  delta=0.08  decision=updated    margin(c1-c2)=0.24
+  delta=0.10  decision=updated    margin(c1-c2)=0.24
+  delta=0.12  decision=updated    margin(c1-c2)=0.24
+  delta=0.14  decision=updated    margin(c1-c2)=0.24
+  delta=0.16  decision=updated    margin(c1-c2)=0.24
+  delta=0.18  decision=updated    margin(c1-c2)=0.24
+  delta=0.20  decision=updated    margin(c1-c2)=0.24
+  delta=0.22  decision=updated    margin(c1-c2)=0.24
+  delta=0.24  decision=updated    margin(c1-c2)=0.24
+  delta=0.26  decision=retained   margin(c1-c2)=0.24 <-- boundary
+  delta=0.28  decision=retained   margin(c1-c2)=0.24
+  delta=0.30  decision=retained   margin(c1-c2)=0.24
+
+=== scenario: noisy (reference=A) ===
+-- tau sweep (delta=0.1) --
+  tau=0.30  decision=updated    c1=0.7 <-- boundary
+  tau=0.35  decision=updated    c1=0.7
+  tau=0.40  decision=updated    c1=0.7
+  tau=0.45  decision=updated    c1=0.7
+  tau=0.50  decision=updated    c1=0.7
+  tau=0.55  decision=updated    c1=0.7
+  tau=0.60  decision=updated    c1=0.7
+  tau=0.65  decision=updated    c1=0.7
+  tau=0.70  decision=updated    c1=0.7
+  tau=0.75  decision=retained   c1=0.7 <-- boundary
+  tau=0.80  decision=retained   c1=0.7
+  tau=0.85  decision=retained   c1=0.7
+  tau=0.90  decision=retained   c1=0.7
+-- delta sweep (tau=0.6) --
+  delta=0.00  decision=updated    margin(c1-c2)=0.16 <-- boundary
+  delta=0.02  decision=updated    margin(c1-c2)=0.16
+  delta=0.04  decision=updated    margin(c1-c2)=0.16
+  delta=0.06  decision=updated    margin(c1-c2)=0.16
+  delta=0.08  decision=updated    margin(c1-c2)=0.16
+  delta=0.10  decision=updated    margin(c1-c2)=0.16
+  delta=0.12  decision=updated    margin(c1-c2)=0.16
+  delta=0.14  decision=updated    margin(c1-c2)=0.16
+  delta=0.16  decision=retained   margin(c1-c2)=0.16 <-- boundary
+  delta=0.18  decision=retained   margin(c1-c2)=0.16
+  delta=0.20  decision=retained   margin(c1-c2)=0.16
+  delta=0.22  decision=retained   margin(c1-c2)=0.16
+  delta=0.24  decision=retained   margin(c1-c2)=0.16
+  delta=0.26  decision=retained   margin(c1-c2)=0.16
+  delta=0.28  decision=retained   margin(c1-c2)=0.16
+  delta=0.30  decision=retained   margin(c1-c2)=0.16
+
+=== scenario: corroboration (reference=granted) ===
+-- tau sweep (delta=0.1) --
+  tau=0.30  decision=updated    c1=0.76 <-- boundary
+  tau=0.35  decision=updated    c1=0.76
+  tau=0.40  decision=updated    c1=0.76
+  tau=0.45  decision=updated    c1=0.76
+  tau=0.50  decision=updated    c1=0.76
+  tau=0.55  decision=updated    c1=0.76
+  tau=0.60  decision=updated    c1=0.76
+  tau=0.65  decision=updated    c1=0.76
+  tau=0.70  decision=updated    c1=0.76
+  tau=0.75  decision=updated    c1=0.76
+  tau=0.80  decision=retained   c1=0.76 <-- boundary
+  tau=0.85  decision=retained   c1=0.76
+  tau=0.90  decision=retained   c1=0.76
+-- delta sweep (tau=0.6) --
+  delta=0.00  decision=updated    margin(c1-c2)=0.2 <-- boundary
+  delta=0.02  decision=updated    margin(c1-c2)=0.2
+  delta=0.04  decision=updated    margin(c1-c2)=0.2
+  delta=0.06  decision=updated    margin(c1-c2)=0.2
+  delta=0.08  decision=updated    margin(c1-c2)=0.2
+  delta=0.10  decision=updated    margin(c1-c2)=0.2
+  delta=0.12  decision=updated    margin(c1-c2)=0.2
+  delta=0.14  decision=updated    margin(c1-c2)=0.2
+  delta=0.16  decision=updated    margin(c1-c2)=0.2
+  delta=0.18  decision=updated    margin(c1-c2)=0.2
+  delta=0.20  decision=retained   margin(c1-c2)=0.2 <-- boundary
+  delta=0.22  decision=retained   margin(c1-c2)=0.2
+  delta=0.24  decision=retained   margin(c1-c2)=0.2
+  delta=0.26  decision=retained   margin(c1-c2)=0.2
+  delta=0.28  decision=retained   margin(c1-c2)=0.2
+  delta=0.30  decision=retained   margin(c1-c2)=0.2
+
+=== scenario: duplicate (reference=same) ===
+-- tau sweep (delta=0.1) --
+  tau=0.30  decision=retained   c1=0.78 <-- boundary
+  tau=0.35  decision=retained   c1=0.78
+  tau=0.40  decision=retained   c1=0.78
+  tau=0.45  decision=retained   c1=0.78
+  tau=0.50  decision=retained   c1=0.78
+  tau=0.55  decision=retained   c1=0.78
+  tau=0.60  decision=retained   c1=0.78
+  tau=0.65  decision=retained   c1=0.78
+  tau=0.70  decision=retained   c1=0.78
+  tau=0.75  decision=retained   c1=0.78
+  tau=0.80  decision=retained   c1=0.78
+  tau=0.85  decision=retained   c1=0.78
+  tau=0.90  decision=retained   c1=0.78
+-- delta sweep (tau=0.6) --
+  delta=0.00  decision=updated    margin(c1-c2)=0.0 <-- boundary
+  delta=0.02  decision=retained   margin(c1-c2)=0.0 <-- boundary
+  delta=0.04  decision=retained   margin(c1-c2)=0.0
+  delta=0.06  decision=retained   margin(c1-c2)=0.0
+  delta=0.08  decision=retained   margin(c1-c2)=0.0
+  delta=0.10  decision=retained   margin(c1-c2)=0.0
+  delta=0.12  decision=retained   margin(c1-c2)=0.0
+  delta=0.14  decision=retained   margin(c1-c2)=0.0
+  delta=0.16  decision=retained   margin(c1-c2)=0.0
+  delta=0.18  decision=retained   margin(c1-c2)=0.0
+  delta=0.20  decision=retained   margin(c1-c2)=0.0
+  delta=0.22  decision=retained   margin(c1-c2)=0.0
+  delta=0.24  decision=retained   margin(c1-c2)=0.0
+  delta=0.26  decision=retained   margin(c1-c2)=0.0
+  delta=0.28  decision=retained   margin(c1-c2)=0.0
+  delta=0.30  decision=retained   margin(c1-c2)=0.0
+

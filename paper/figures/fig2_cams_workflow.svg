@@ -1,0 +1,100 @@
+<svg viewBox="0 0 800 920" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+    <filter id="soft2" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.1" flood-color="#0b0b0b" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="800" height="920" fill="#ffffff"/>
+
+  <!-- Start -->
+  <rect x="300" y="16" width="200" height="46" rx="23" fill="#eef2f7" stroke="#8b96a8" stroke-width="1.3" filter="url(#soft2)"/>
+  <text x="400" y="44" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1a1a19">Incoming Observation</text>
+
+  <line x1="400" y1="62" x2="400" y2="88" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <rect x="255" y="90" width="290" height="46" rx="7" fill="#f6f6f4" stroke="#b6b5ae" stroke-width="1.2"/>
+  <text x="400" y="118" text-anchor="middle" font-size="13.5" fill="#1a1a19">Identify Case, Entity, Fact Type</text>
+
+  <line x1="400" y1="136" x2="400" y2="162" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <rect x="235" y="164" width="330" height="46" rx="7" fill="#f6f6f4" stroke="#b6b5ae" stroke-width="1.2"/>
+  <text x="400" y="192" text-anchor="middle" font-size="13.5" fill="#1a1a19">Match Existing Observations (same FactKey)</text>
+
+  <line x1="400" y1="210" x2="400" y2="236" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <!-- Decision diamond: candidates exist? -->
+  <polygon points="400,238 512,290 400,342 288,290" fill="#eef2f7" stroke="#5a6b85" stroke-width="1.3"/>
+  <text x="400" y="286" text-anchor="middle" font-size="12.5" fill="#1a1a19">One or more</text>
+  <text x="400" y="301" text-anchor="middle" font-size="12.5" fill="#1a1a19">candidates?</text>
+
+  <!-- branch: yes (down) -->
+  <line x1="400" y1="342" x2="400" y2="370" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="416" y="360" font-size="11.5" fill="#52514e">yes</text>
+
+  <rect x="235" y="372" width="330" height="46" rx="7" fill="#f6f6f4" stroke="#b6b5ae" stroke-width="1.2"/>
+  <text x="400" y="400" text-anchor="middle" font-size="13.5" fill="#1a1a19">Compute A, T, X, E for each candidate</text>
+
+  <!-- branch: no -->
+  <line x1="512" y1="290" x2="640" y2="290" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="570" y="282" font-size="11.5" fill="#52514e">no</text>
+  <rect x="608" y="264" width="160" height="52" rx="7" fill="#fbfaf7" stroke="#c8c7c0" stroke-width="1.2"/>
+  <text x="688" y="286" text-anchor="middle" font-size="12" fill="#1a1a19">No observation</text>
+  <text x="688" y="303" text-anchor="middle" font-size="12" fill="#1a1a19">yet for this fact</text>
+
+  <line x1="400" y1="418" x2="400" y2="444" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <rect x="245" y="446" width="310" height="46" rx="7" fill="#f6f6f4" stroke="#b6b5ae" stroke-width="1.2"/>
+  <text x="400" y="474" text-anchor="middle" font-size="13.5" fill="#1a1a19">Score: C = w_A&#183;A + w_T&#183;T + w_X&#183;X + w_E&#183;E</text>
+
+  <line x1="400" y1="492" x2="400" y2="518" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <rect x="245" y="520" width="310" height="46" rx="7" fill="#f6f6f4" stroke="#b6b5ae" stroke-width="1.2"/>
+  <text x="400" y="548" text-anchor="middle" font-size="13.5" fill="#1a1a19">Rank; identify C1 (top) and C2 (runner-up)</text>
+
+  <line x1="400" y1="566" x2="400" y2="592" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <!-- Decision diamond: single or competing -->
+  <polygon points="400,594 534,652 400,710 266,652" fill="#eef2f7" stroke="#5a6b85" stroke-width="1.3"/>
+  <text x="400" y="636" text-anchor="middle" font-size="12" fill="#1a1a19">single candidate:</text>
+  <text x="400" y="651" text-anchor="middle" font-size="12" fill="#1a1a19">C1 &#8805; &#964; ?</text>
+  <text x="400" y="670" text-anchor="middle" font-size="12" fill="#1a1a19">competing: C1&#8805;&#964; and</text>
+  <text x="400" y="685" text-anchor="middle" font-size="12" fill="#1a1a19">(C1&#8722;C2)&#8805;&#948; ?</text>
+
+  <!-- yes -> updated (green) -->
+  <line x1="400" y1="710" x2="400" y2="736" stroke="#0ca30c" stroke-width="1.6" marker-end="url(#arrow2)"/>
+  <text x="418" y="726" font-size="11.5" fill="#0ca30c" font-weight="600">yes</text>
+  <rect x="270" y="738" width="260" height="50" rx="8" fill="#e6f6e6" stroke="#0ca30c" stroke-width="1.8" filter="url(#soft2)"/>
+  <text x="400" y="759" text-anchor="middle" font-size="14" font-weight="700" fill="#0a7d0a">UPDATED</text>
+  <text x="400" y="776" text-anchor="middle" font-size="10.5" fill="#0a7d0a">advance Twin State</text>
+
+  <!-- no -> two sub-outcomes -->
+  <line x1="266" y1="652" x2="132" y2="652" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+  <text x="185" y="644" font-size="11.5" fill="#52514e">no</text>
+
+  <rect x="6" y="598" width="222" height="52" rx="8" fill="#fff6e3" stroke="#c98500" stroke-width="1.6" filter="url(#soft2)"/>
+  <text x="117" y="618" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8a5e00">RETAINED</text>
+  <text x="117" y="634" text-anchor="middle" font-size="9.8" fill="#8a5e00">competing candidates, no clear</text>
+  <text x="117" y="646" text-anchor="middle" font-size="9.8" fill="#8a5e00">margin winner &#8212; prior state kept</text>
+  <line x1="132" y1="652" x2="132" y2="650" stroke="#8b8a83" stroke-width="1.4"/>
+
+  <rect x="6" y="682" width="222" height="52" rx="8" fill="#fbeaea" stroke="#d03b3b" stroke-width="1.6" filter="url(#soft2)"/>
+  <text x="117" y="702" text-anchor="middle" font-size="12.5" font-weight="700" fill="#a02323">UNRESOLVED</text>
+  <text x="117" y="718" text-anchor="middle" font-size="9.8" fill="#a02323">single candidate below &#964; &#8212; no</text>
+  <text x="117" y="730" text-anchor="middle" font-size="9.8" fill="#a02323">prior state exists for this fact</text>
+  <path d="M132 652 L132 705 L228 705" fill="none" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow2)"/>
+
+  <!-- both converge to provenance -->
+  <line x1="117" y1="734" x2="117" y2="812" stroke="#8b8a83" stroke-width="1.3"/>
+  <line x1="400" y1="788" x2="400" y2="812" stroke="#8b8a83" stroke-width="1.3"/>
+  <line x1="117" y1="812" x2="400" y2="812" stroke="#8b8a83" stroke-width="1.3" marker-end="url(#arrow2)"/>
+
+  <rect x="230" y="814" width="340" height="50" rx="8" fill="#dbe9fa" stroke="#2a78d6" stroke-width="1.6" filter="url(#soft2)"/>
+  <text x="400" y="835" text-anchor="middle" font-size="13" font-weight="600" fill="#104281">Store SyncDecision: candidates, C,</text>
+  <text x="400" y="852" text-anchor="middle" font-size="13" font-weight="600" fill="#104281">&#964;, &#948;, decision, provenance links</text>
+
+  <text x="400" y="896" text-anchor="middle" font-size="12" fill="#26261f" font-style="italic">Fig. 2. CAMS synchronization workflow. The three outcomes &#8212; updated (green),</text>
+  <text x="400" y="912" text-anchor="middle" font-size="12" fill="#26261f" font-style="italic">retained (amber), and unresolved (red) &#8212; are distinct, separately tracked decisions.</text>
+</svg>

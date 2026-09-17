@@ -1,0 +1,60 @@
+<svg viewBox="0 0 760 640" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow1" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#0b0b0b" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="760" height="640" fill="#ffffff"/>
+
+  <!-- 1. Stakeholder Sources -->
+  <rect x="220" y="24" width="320" height="60" rx="8" fill="#f4f6fa" stroke="#9aa6b8" stroke-width="1.2" filter="url(#soft)"/>
+  <text x="380" y="50" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1a1a19">Stakeholder Sources</text>
+  <text x="380" y="70" text-anchor="middle" font-size="11" fill="#52514e">police &#183; court &#183; lawyer &#183; forensic &#183; citizen</text>
+
+  <line x1="380" y1="84" x2="380" y2="112" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow1)"/>
+
+  <!-- 2. Input / Document Processing -->
+  <rect x="190" y="114" width="380" height="60" rx="8" fill="#f4f6fa" stroke="#9aa6b8" stroke-width="1.2" filter="url(#soft)"/>
+  <text x="380" y="140" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1a1a19">Input and Document Processing</text>
+  <text x="380" y="160" text-anchor="middle" font-size="11" fill="#52514e">pypdf text extraction &#183; Gemini structuring &#183; heuristic fallback</text>
+
+  <line x1="380" y1="174" x2="380" y2="202" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow1)"/>
+
+  <!-- 3. Fact and Event Extraction -->
+  <rect x="210" y="204" width="340" height="60" rx="8" fill="#f4f6fa" stroke="#9aa6b8" stroke-width="1.2" filter="url(#soft)"/>
+  <text x="380" y="230" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1a1a19">Fact and Event Extraction</text>
+  <text x="380" y="250" text-anchor="middle" font-size="11" fill="#52514e">structured Observations: fact type, value, source, event / ingestion time</text>
+
+  <line x1="380" y1="264" x2="380" y2="292" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow1)"/>
+
+  <!-- 4. CAMS Synchronization (emphasized, primary blue) -->
+  <rect x="160" y="294" width="440" height="78" rx="9" fill="#dbe9fa" stroke="#2a78d6" stroke-width="2.2" filter="url(#soft)"/>
+  <text x="380" y="325" text-anchor="middle" font-size="17.5" font-weight="700" fill="#104281">CAMS Synchronization</text>
+  <text x="380" y="347" text-anchor="middle" font-size="11.5" fill="#184f95">confidence fusion of A, T, X, E &#183; threshold &#964; &#183; margin &#948;</text>
+  <text x="380" y="363" text-anchor="middle" font-size="11" font-style="italic" fill="#184f95">&#167;4 &#8212; the only stage that may modify the Twin State</text>
+
+  <line x1="380" y1="372" x2="380" y2="400" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow1)"/>
+
+  <!-- 5. Justice Digital Twin State -->
+  <rect x="190" y="402" width="380" height="60" rx="8" fill="#f4f6fa" stroke="#9aa6b8" stroke-width="1.2" filter="url(#soft)"/>
+  <text x="380" y="428" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1a1a19">Justice Digital Twin State</text>
+  <text x="380" y="448" text-anchor="middle" font-size="11" fill="#52514e">current value + confidence per fact, versioned (ODFS), provenance-linked</text>
+
+  <line x1="380" y1="462" x2="380" y2="490" stroke="#8b8a83" stroke-width="1.4" marker-end="url(#arrow1)"/>
+
+  <!-- 6. Role-Based Views -->
+  <rect x="220" y="492" width="320" height="60" rx="8" fill="#f4f6fa" stroke="#9aa6b8" stroke-width="1.2" filter="url(#soft)"/>
+  <text x="380" y="518" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1a1a19">Role-Based Views</text>
+  <text x="380" y="538" text-anchor="middle" font-size="11" fill="#52514e">access-controlled subsets of the synchronized state</text>
+
+  <!-- side annotation: historical observations retained -->
+  <path d="M185 234 C 55 234, 55 432, 185 432" fill="none" stroke="#b6b5ae" stroke-width="1.3" stroke-dasharray="1 4" stroke-linecap="round"/>
+  <rect x="18" y="298" width="26" height="70" rx="6" fill="none"/>
+  <text x="30" y="333" font-size="10.5" fill="#6b6a63" font-style="italic" transform="rotate(-90 30 333)" text-anchor="middle">Observations retained independently of Twin State</text>
+
+  <text x="380" y="588" text-anchor="middle" font-size="12" fill="#26261f" font-style="italic">Fig. 1. NyayaOS Justice Digital Twin architecture. CAMS (highlighted) is the sole</text>
+  <text x="380" y="606" text-anchor="middle" font-size="12" fill="#26261f" font-style="italic">boundary between raw extracted observations and the synchronized case state.</text>
+</svg>
