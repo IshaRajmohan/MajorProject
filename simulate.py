@@ -10,7 +10,8 @@ import asyncio
 from datetime import datetime, timezone
 
 import console_log as clog
-from db_repository import DEMO_DATA_ROOT, DbRepository
+from db_repository import DbRepository
+from paths import DEMO_DATA_ROOT
 from pipeline import Pipeline
 
 repo = DbRepository(demo=True)

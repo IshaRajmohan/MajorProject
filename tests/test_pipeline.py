@@ -5,10 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from file_repository import FileRepository
 from gemini_extractor import fallback_extract, parse_gemini_response
@@ -25,52 +23,10 @@ def tmp_demo_repo(tmp_path: Path):
 
 
 @pytest.fixture
-def pg_repo(require_postgres, tmp_path: Path):
-    from db_repository import DbRepository
-
-    return DbRepository(demo=False, root=tmp_path / "cases")
-
-
-@pytest.fixture
-def pg_demo_repo(require_postgres, tmp_path: Path):
-    from db_repository import DbRepository
-
-    return DbRepository(demo=True, root=tmp_path / "demo_cases")
-
-
-@pytest.fixture
 def pipe(pg_repo):
     from pipeline import Pipeline
 
     return Pipeline(repository=pg_repo)
-
-
-@pytest.fixture
-def client(require_postgres, loop_runner, pg_repo, pg_demo_repo, monkeypatch):
-    import main as main_mod
-    from pipeline import Pipeline
-
-    monkeypatch.setattr(main_mod, "repo", pg_repo)
-    monkeypatch.setattr(main_mod, "pipeline", Pipeline(repository=pg_repo))
-    monkeypatch.setattr(main_mod, "demo_repo", pg_demo_repo)
-    monkeypatch.setattr(main_mod, "demo_pipeline", Pipeline(repository=pg_demo_repo))
-
-    def call(method: str, url: str, **kwargs: Any):
-        async def _do():
-            transport = ASGITransport(app=main_mod.app)
-            async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                return await getattr(ac, method)(url, **kwargs)
-
-        return loop_runner.run(_do())
-
-    class _C:
-        def get(self, url, **kw):
-            return call("get", url, **kw)
-
-        def post(self, url, **kw):
-            return call("post", url, **kw)
-
-    return _C()
 
 
 # ---- Gemini parsing / fallback (no DB) ----
@@ -380,8 +336,9 @@ def test_abstain_persists_conflict_in_postgres(pipe, loop_runner, case_id):
 # ---- API (PostgreSQL) ----
 
 
-def test_api_text_pipeline(client, pg_repo, case_id):
-    r = client.post("/cases", json={"case_id": case_id, "title": "t"})
+def test_api_text_pipeline(client, auth, pg_repo, case_id):
+    h = auth("COURT")
+    r = client.post("/cases", json={"case_id": case_id, "title": "t"}, headers=h)
     assert r.status_code == 200
     r = client.post(
         f"/cases/{case_id}/text",
@@ -391,6 +348,7 @@ def test_api_text_pipeline(client, pg_repo, case_id):
             "source_type": "forensic",
             "force_fallback": True,
         },
+        headers=h,
     )
     assert r.status_code == 200
     body = r.json()
@@ -401,12 +359,12 @@ def test_api_text_pipeline(client, pg_repo, case_id):
     assert not (pg_repo.root / case_id / "facts.json").exists()
     assert not (pg_repo.root / case_id / "history.json").exists()
 
-    assert client.get(f"/cases/{case_id}/observations").status_code == 200
-    assert client.get(f"/cases/{case_id}/facts").status_code == 200
-    assert client.get(f"/cases/{case_id}/history").status_code == 200
-    assert client.get(f"/cases/{case_id}/conflicts").status_code == 200
-    assert client.get(f"/cases/{case_id}/provenance").status_code == 200
-    assert client.post(f"/cases/{case_id}/resync").status_code == 200
+    assert client.get(f"/cases/{case_id}/observations", headers=h).status_code == 200
+    assert client.get(f"/cases/{case_id}/facts", headers=h).status_code == 200
+    assert client.get(f"/cases/{case_id}/history", headers=h).status_code == 200
+    assert client.get(f"/cases/{case_id}/conflicts", headers=h).status_code == 200
+    assert client.get(f"/cases/{case_id}/provenance", headers=h).status_code == 200
+    assert client.post(f"/cases/{case_id}/resync", headers=h).status_code == 200
 
 
 def test_api_root_and_demo_isolated(client, pg_repo, pg_demo_repo, loop_runner):
@@ -443,8 +401,9 @@ def test_api_health(client):
     assert body["storage"] == "postgresql"
 
 
-def test_stakeholder_folders_and_ocr_txt_upload(client, pg_repo, case_id):
-    client.post("/cases", json={"case_id": case_id, "title": "ocr"})
+def test_stakeholder_folders_and_ocr_txt_upload(client, auth, pg_repo, case_id):
+    h = auth("COURT")
+    client.post("/cases", json={"case_id": case_id, "title": "ocr"}, headers=h)
     content = b"Charge: IPC 302\nWeapon: knife\nLocation: Mumbai\n"
     r = client.post(
         f"/cases/{case_id}/upload",
@@ -455,6 +414,7 @@ def test_stakeholder_folders_and_ocr_txt_upload(client, pg_repo, case_id):
             "title": "fir.txt",
         },
         files={"file": ("fir.txt", content, "text/plain")},
+        headers=h,
     )
     assert r.status_code == 200, r.text
     body = r.json()
@@ -463,7 +423,7 @@ def test_stakeholder_folders_and_ocr_txt_upload(client, pg_repo, case_id):
     sh = list((pg_repo.root / case_id / "stakeholders").iterdir())
     assert sh, "expected stakeholder folder"
     assert (pg_repo.root / case_id / "uploads").exists()
-    full = client.get(f"/cases/{case_id}/full").json()
+    full = client.get(f"/cases/{case_id}/full", headers=h).json()
     assert full["summary"]["documents"] >= 1
     assert full["summary"]["observations"] >= 1
     assert full["timeline"]

@@ -62,6 +62,7 @@ def test_schema_tables_exist(loop_runner):
         "sync_history",
         "provenance",
         "uploads",
+        "submissions",
         "alembic_version",
     } <= tables
 
@@ -75,7 +76,8 @@ def test_enums_exist(loop_runner):
                     await conn.execute(
                         text(
                             "SELECT typname FROM pg_type WHERE typname "
-                            "IN ('system_role', 'access_status')"
+                            "IN ('system_role', 'access_status', "
+                            "'document_visibility', 'submission_status')"
                         )
                     )
                 ).scalars()
@@ -83,7 +85,39 @@ def test_enums_exist(loop_runner):
         finally:
             await engine.dispose()
 
-    assert loop_runner.run(check()) == {"system_role", "access_status"}
+    assert loop_runner.run(check()) == {
+        "system_role",
+        "access_status",
+        "document_visibility",
+        "submission_status",
+    }
+
+
+def test_new_enum_values(loop_runner):
+    async def check():
+        engine = create_async_engine(DATABASE_URL)
+        try:
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT t.typname, e.enumlabel FROM pg_type t "
+                            "JOIN pg_enum e ON e.enumtypid = t.oid "
+                            "WHERE t.typname IN ('document_visibility', 'submission_status')"
+                        )
+                    )
+                ).all()
+                return {(r.typname, r.enumlabel) for r in rows}
+        finally:
+            await engine.dispose()
+
+    values = loop_runner.run(check())
+    assert {("document_visibility", "INTERNAL"), ("document_visibility", "CITIZEN_VISIBLE")} <= values
+    assert {
+        ("submission_status", "PENDING"),
+        ("submission_status", "APPROVED"),
+        ("submission_status", "REJECTED"),
+    } <= values
 
 
 def test_constraints_exist(loop_runner):
@@ -110,6 +144,10 @@ def test_constraints_exist(loop_runner):
         "case_access_user_id_fkey",
         "case_access_case_id_fkey",
         "case_access_granted_by_fkey",
+        "submissions_case_id_fkey",
+        "submissions_submitted_by_fkey",
+        "submissions_reviewed_by_fkey",
+        "submissions_document_id_fkey",
     } <= constraints
 
 
@@ -131,6 +169,8 @@ def test_unique_indexes_exist(loop_runner):
     assert "ix_users_email" in indexes
     assert "ix_cases_case_number" in indexes
     assert "ix_case_access_case_status" in indexes
+    assert "ix_submissions_case_status" in indexes
+    assert "ix_submissions_submitted_by" in indexes
 
 
 def test_get_db_yields_session(loop_runner):

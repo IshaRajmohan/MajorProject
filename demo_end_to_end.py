@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 
 from demo_data import CASE_001_DESCRIPTION, CASE_001_ID, CASE_001_TITLE, case_001_documents
-from db_repository import DEMO_DATA_ROOT, DbRepository
+from db_repository import DbRepository
+from paths import DEMO_DATA_ROOT
 from pipeline import Pipeline
 import console_log as clog
 

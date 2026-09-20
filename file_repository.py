@@ -27,9 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parent
-DATA_ROOT = ROOT / "data" / "cases"
-DEMO_DATA_ROOT = ROOT / "data" / "demo_cases"
+from paths import DATA_ROOT, DEMO_DATA_ROOT, ROOT  # noqa: F401  (legacy re-export)
 
 _lock = threading.RLock()
 

@@ -18,23 +18,30 @@ external identifier used by the API.
 Serialization reproduces the old JSON shapes exactly (same dict keys and
 ISO-8601 timestamp strings) so the FastAPI responses and the dashboard are
 unchanged. Observations, sync_history and provenance are append-only.
+
+Task 3 additions: documents carry an explicit ``visibility``
+(INTERNAL | CITIZEN_VISIBLE, enforced by rbac.py filters), and citizen
+submissions live in ``submissions`` — a PENDING row only becomes an official
+document (and thus CAMS input) through an assigned COURT approval.
 """
 
 from __future__ import annotations
 
+import enum
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 import db
 import db_models
-from file_repository import DATA_ROOT, DEMO_DATA_ROOT
+from paths import DATA_ROOT, DEMO_DATA_ROOT
 
 ROOT = Path(__file__).resolve().parent
 
@@ -64,6 +71,28 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat()
 
 
+def _iso_date(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _iso(value)
+    return value.isoformat() if isinstance(value, date) else str(value)
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _enum_value(value: Any) -> Any:
+    return value.value if isinstance(value, enum.Enum) else value
+
+
 def _safe_segment(value: str, fallback: str = "unknown") -> str:
     s = re.sub(r"[^A-Za-z0-9._-]+", "_", (value or fallback).strip())[:80]
     return s or fallback
@@ -83,12 +112,18 @@ def _u(value: Any) -> Optional[UUID]:
 
 # ---- row → old-JSON-shape dict serializers ----
 
-def _case_to_dict(row: db_models.Case) -> Dict[str, Any]:
+def case_to_dict(row: db_models.Case) -> Dict[str, Any]:
     return {
         "case_id": row.case_number,
         "title": row.title,
         "description": row.description,
+        "case_type": row.case_type,
+        "case_status": row.case_status,
+        "filing_date": _iso_date(row.filing_date),
+        "court_name": row.court_name,
+        "next_hearing_date": _iso_date(row.next_hearing_date),
         "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
     }
 
 
@@ -105,6 +140,7 @@ def _document_to_dict(row: db_models.Document, case_number: str) -> Dict[str, An
         "extractor": row.extractor,
         "extractor_note": row.extractor_note,
         "ocr": row.ocr,
+        "visibility": _enum_value(row.visibility),
     }
 
 
@@ -200,6 +236,31 @@ def _upload_to_dict(row: db_models.Upload) -> Dict[str, Any]:
     }
 
 
+def _submission_options():
+    return (
+        selectinload(db_models.Submission.submitter),
+        selectinload(db_models.Submission.reviewer),
+    )
+
+
+def _submission_to_dict(row: db_models.Submission, case_number: str) -> Dict[str, Any]:
+    return {
+        "submission_id": str(row.submission_id),
+        "case_id": case_number,
+        "submitted_by": str(row.submitted_by),
+        "submitted_by_email": row.submitter.email if row.submitter else None,
+        "title": row.title,
+        "text": row.text,
+        "status": _enum_value(row.status),
+        "created_at": _iso(row.created_at),
+        "reviewed_by": str(row.reviewed_by) if row.reviewed_by else None,
+        "reviewed_by_email": row.reviewer.email if row.reviewer else None,
+        "reviewed_at": _iso(row.reviewed_at),
+        "review_note": row.review_note,
+        "document_id": str(row.document_id) if row.document_id else None,
+    }
+
+
 class DbRepository:
     """PostgreSQL-backed repository with FileRepository-compatible shapes."""
 
@@ -283,13 +344,18 @@ class DbRepository:
                     .order_by(db_models.Case.created_at, db_models.Case.case_number)
                 )
             ).scalars().all()
-            return [_case_to_dict(r) for r in rows]
+            return [case_to_dict(r) for r in rows]
 
     async def create_case(
         self,
         case_id: Optional[str] = None,
         title: str = "Untitled case",
         description: str = "",
+        case_type: Optional[str] = None,
+        case_status: Optional[str] = None,
+        filing_date: Any = None,
+        court_name: Optional[str] = None,
+        next_hearing_date: Any = None,
     ) -> Dict[str, Any]:
         cid = case_id or f"CASE-{uuid4().hex[:8].upper()}"
         async with self._session() as session:
@@ -302,19 +368,27 @@ class DbRepository:
                 )
             ).scalar_one_or_none()
             if existing is not None:
-                return _case_to_dict(existing)
+                return case_to_dict(existing)
             row = db_models.Case(
-                case_number=cid, title=title, description=description, is_demo=self.demo
+                case_number=cid,
+                title=title,
+                description=description,
+                is_demo=self.demo,
+                case_type=case_type,
+                case_status=case_status or "OPEN",
+                filing_date=_parse_date(filing_date),
+                court_name=court_name,
+                next_hearing_date=_parse_date(next_hearing_date),
             )
             session.add(row)
             await session.commit()
             self._case_dir(cid)
-            return _case_to_dict(row)
+            return case_to_dict(row)
 
     async def get_case(self, case_id: str) -> Dict[str, Any]:
         async with self._session() as session:
             row = await self._case_row(session, case_id)
-            return _case_to_dict(row)
+            return case_to_dict(row)
 
     async def ensure_case(
         self, case_id: str, title: str = "", description: str = ""
@@ -327,7 +401,28 @@ class DbRepository:
                 row.description = description
             await session.commit()
             self._case_dir(case_id)
-            return _case_to_dict(row)
+            return case_to_dict(row)
+
+    async def update_case(self, case_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+        """Patch case metadata. Keys absent from ``patch`` are left unchanged."""
+        async with self._session() as session:
+            row = await self._case_row(session, case_id)
+            if "title" in patch and patch["title"] is not None:
+                row.title = patch["title"]
+            if "description" in patch and patch["description"] is not None:
+                row.description = patch["description"]
+            if "case_type" in patch:
+                row.case_type = patch["case_type"]
+            if "case_status" in patch and patch["case_status"] is not None:
+                row.case_status = patch["case_status"]
+            if "filing_date" in patch:
+                row.filing_date = _parse_date(patch["filing_date"])
+            if "court_name" in patch:
+                row.court_name = patch["court_name"]
+            if "next_hearing_date" in patch:
+                row.next_hearing_date = _parse_date(patch["next_hearing_date"])
+            await session.commit()
+            return case_to_dict(row)
 
     async def delete_case_dir(self, case_id: str) -> None:
         async with self._session() as session:
@@ -363,6 +458,9 @@ class DbRepository:
         async with self._session() as session:
             case = await self._case_row(session, case_id, create=True)
             self.stakeholder_dir(case_id, doc.get("source_type") or "unknown", doc.get("source") or doc.get("source_id") or "unknown")
+            visibility = doc.get("visibility") or db_models.DocumentVisibility.INTERNAL
+            if not isinstance(visibility, db_models.DocumentVisibility):
+                visibility = db_models.DocumentVisibility(str(visibility))
             row = db_models.Document(
                 document_id=_u(doc.get("document_id")) or uuid4(),
                 case_id=case.id,
@@ -374,6 +472,7 @@ class DbRepository:
                 extractor=doc.get("extractor"),
                 extractor_note=doc.get("extractor_note"),
                 ocr=doc.get("ocr"),
+                visibility=visibility,
             )
             session.add(row)
             await session.commit()
@@ -704,3 +803,139 @@ class DbRepository:
             session.add(row)
             await session.commit()
             return _upload_to_dict(row)
+
+    # -- citizen submissions (Task 3; PENDING until COURT review) --
+
+    async def _load_submission(
+        self, session: AsyncSession, submission_id: Optional[UUID]
+    ) -> Optional[db_models.Submission]:
+        if submission_id is None:
+            return None
+        return (
+            await session.execute(
+                select(db_models.Submission)
+                .options(*_submission_options())
+                .where(db_models.Submission.submission_id == submission_id)
+            )
+        ).scalar_one_or_none()
+
+    async def create_submission(
+        self,
+        case_id: str,
+        submitted_by: UUID,
+        title: str,
+        text: str,
+    ) -> Dict[str, Any]:
+        async with self._session() as session:
+            case = await self._case_row(session, case_id)
+            row = db_models.Submission(
+                submission_id=uuid4(),
+                case_id=case.id,
+                submitted_by=submitted_by,
+                title=title,
+                text=text,
+                status=db_models.SubmissionStatus.PENDING,
+            )
+            session.add(row)
+            await session.commit()
+            loaded = await self._load_submission(session, row.submission_id)
+            return _submission_to_dict(loaded, case.case_number)
+
+    async def list_submissions(
+        self, case_id: str, submitted_by: Optional[UUID] = None
+    ) -> List[Dict[str, Any]]:
+        async with self._session() as session:
+            case = await self._case_row(session, case_id)
+            stmt = (
+                select(db_models.Submission)
+                .options(*_submission_options())
+                .where(db_models.Submission.case_id == case.id)
+                .order_by(
+                    db_models.Submission.created_at, db_models.Submission.submission_id
+                )
+            )
+            if submitted_by is not None:
+                stmt = stmt.where(db_models.Submission.submitted_by == submitted_by)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_submission_to_dict(r, case.case_number) for r in rows]
+
+    async def get_submission(self, case_id: str, submission_id: str) -> Dict[str, Any]:
+        async with self._session() as session:
+            case = await self._case_row(session, case_id)
+            row = await self._load_submission(session, _u(submission_id))
+            if row is None or row.case_id != case.id:
+                raise KeyError(f"submission not found: {submission_id}")
+            return _submission_to_dict(row, case.case_number)
+
+    async def decide_submission(
+        self,
+        case_id: str,
+        submission_id: str,
+        decision: str,
+        reviewer_id: UUID,
+        note: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim a PENDING submission (→ APPROVED / REJECTED).
+
+        Returns None when the row exists but was already reviewed, so two
+        concurrent reviewers cannot both act on the same submission.
+        """
+        target = (
+            db_models.SubmissionStatus.APPROVED
+            if decision.upper() == "APPROVE"
+            else db_models.SubmissionStatus.REJECTED
+        )
+        async with self._session() as session:
+            case = await self._case_row(session, case_id)
+            sid = _u(submission_id)
+            result = await session.execute(
+                update(db_models.Submission)
+                .where(
+                    db_models.Submission.submission_id == sid,
+                    db_models.Submission.case_id == case.id,
+                    db_models.Submission.status == db_models.SubmissionStatus.PENDING,
+                )
+                .values(
+                    status=target,
+                    reviewed_by=reviewer_id,
+                    reviewed_at=_utcnow(),
+                    review_note=note,
+                )
+            )
+            if result.rowcount == 0:
+                row = await self._load_submission(session, sid)
+                if row is None or row.case_id != case.id:
+                    raise KeyError(f"submission not found: {submission_id}")
+                return None
+            await session.commit()
+            loaded = await self._load_submission(session, sid)
+            return _submission_to_dict(loaded, case.case_number)
+
+    async def revert_submission(self, submission_id: str, note: Optional[str] = None) -> None:
+        """Undo an APPROVED claim after a failed ingestion (→ PENDING)."""
+        async with self._session() as session:
+            await session.execute(
+                update(db_models.Submission)
+                .where(
+                    db_models.Submission.submission_id == _u(submission_id),
+                    db_models.Submission.status == db_models.SubmissionStatus.APPROVED,
+                )
+                .values(
+                    status=db_models.SubmissionStatus.PENDING,
+                    reviewed_by=None,
+                    reviewed_at=None,
+                    review_note=note,
+                )
+            )
+            await session.commit()
+
+    async def attach_submission_document(
+        self, submission_id: str, document_id: str
+    ) -> None:
+        async with self._session() as session:
+            await session.execute(
+                update(db_models.Submission)
+                .where(db_models.Submission.submission_id == _u(submission_id))
+                .values(document_id=_u(document_id))
+            )
+            await session.commit()

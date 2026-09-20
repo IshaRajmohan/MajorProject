@@ -106,8 +106,22 @@ class Pipeline:
         case_id: Optional[str] = None,
         title: str = "Untitled case",
         description: str = "",
+        case_type: Optional[str] = None,
+        case_status: Optional[str] = None,
+        filing_date: Any = None,
+        court_name: Optional[str] = None,
+        next_hearing_date: Any = None,
     ) -> Dict[str, Any]:
-        meta = await self.repo.create_case(case_id=case_id, title=title, description=description)
+        meta = await self.repo.create_case(
+            case_id=case_id,
+            title=title,
+            description=description,
+            case_type=case_type,
+            case_status=case_status,
+            filing_date=filing_date,
+            court_name=court_name,
+            next_hearing_date=next_hearing_date,
+        )
         clog.banner("CREATE CASE", meta["case_id"])
         clog.kv("title", meta.get("title"))
         clog.kv("folder", str(self.repo.root / meta["case_id"]))
@@ -123,6 +137,7 @@ class Pipeline:
         title: str = "",
         force_fallback: bool = False,
         ocr_meta: Optional[Dict[str, Any]] = None,
+        visibility: Optional[str] = None,
     ) -> Dict[str, Any]:
         await self.repo.ensure_case(case_id)
         now = datetime.now(timezone.utc)
@@ -163,6 +178,7 @@ class Pipeline:
             "extractor": extraction["extractor"],
             "extractor_note": extraction["note"],
             "ocr": ocr_meta,
+            "visibility": visibility or "INTERNAL",
         }
         await self.repo.append_document(case_id, doc)
         clog.banner("DATABASE STORAGE", case_id)
@@ -240,6 +256,7 @@ class Pipeline:
         content_type: Optional[str] = None,
         force_fallback: bool = False,
         title: str = "",
+        visibility: Optional[str] = None,
     ) -> Dict[str, Any]:
         clog.banner("UPLOAD / OCR", case_id)
         clog.kv("filename", filename)
@@ -285,6 +302,7 @@ class Pipeline:
             source_type=source_type,
             title=title or f"OCR:{filename}",
             force_fallback=force_fallback,
+            visibility=visibility,
             ocr_meta={
                 "method": ocr.get("method"),
                 "note": ocr.get("note"),

@@ -9,7 +9,8 @@ Physical upload bytes stay on disk under data/cases|demo_cases.
 The JSON FileRepository is no longer used at runtime (see db_repository.py);
 old JSON files under data/ are kept on disk but never read by the app.
 
-Login/JWT lives in security.py + auth.py; RBAC permission checks are Task 3.
+Login/JWT lives in security.py + auth.py; case-RBAC permission checks live in
+rbac.py (capabilities, resource filtering, access management, submissions).
 """
 
 from __future__ import annotations
@@ -57,8 +58,23 @@ class AccessStatus(str, enum.Enum):
     REVOKED = "REVOKED"
 
 
+class DocumentVisibility(str, enum.Enum):
+    INTERNAL = "INTERNAL"
+    CITIZEN_VISIBLE = "CITIZEN_VISIBLE"
+
+
+class SubmissionStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 system_role_enum = Enum(SystemRole, name="system_role", native_enum=True)
 access_status_enum = Enum(AccessStatus, name="access_status", native_enum=True)
+document_visibility_enum = Enum(
+    DocumentVisibility, name="document_visibility", native_enum=True
+)
+submission_status_enum = Enum(SubmissionStatus, name="submission_status", native_enum=True)
 
 
 class User(Base):
@@ -147,6 +163,10 @@ class Case(Base):
         back_populates="case",
         cascade="all, delete-orphan",
     )
+    submissions: Mapped[List["Submission"]] = relationship(
+        back_populates="case",
+        cascade="all, delete-orphan",
+    )
 
 
 class CaseAccess(Base):
@@ -213,6 +233,9 @@ class Document(Base):
     extractor: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     extractor_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ocr: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    visibility: Mapped[DocumentVisibility] = mapped_column(
+        document_visibility_enum, nullable=False, default=DocumentVisibility.INTERNAL
+    )
 
     case: Mapped[Case] = relationship(back_populates="documents", foreign_keys=[case_id])
     observations: Mapped[List["Observation"]] = relationship(
@@ -438,3 +461,59 @@ class Upload(Base):
     )
 
     case: Mapped[Case] = relationship(back_populates="uploads", foreign_keys=[case_id])
+
+
+class Submission(Base):
+    """Citizen submission workflow (Task 3).
+
+    A citizen submits text for an assigned case; the row is PENDING until an
+    assigned COURT user reviews it. Approval feeds the text through the normal
+    extraction → observations → CAMS pipeline and links the created document;
+    rejection leaves case/CAMS state untouched.
+    """
+
+    __tablename__ = "submissions"
+    __table_args__ = (
+        Index("ix_submissions_case_status", "case_id", "status"),
+        Index("ix_submissions_submitted_by", "submitted_by"),
+    )
+
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    submitted_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[SubmissionStatus] = mapped_column(
+        submission_status_enum, nullable=False, default=SubmissionStatus.PENDING
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.document_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    case: Mapped[Case] = relationship(back_populates="submissions", foreign_keys=[case_id])
+    submitter: Mapped[User] = relationship(foreign_keys=[submitted_by])
+    reviewer: Mapped[Optional[User]] = relationship(foreign_keys=[reviewed_by])

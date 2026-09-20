@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 
 import console_log as clog
-from db_repository import DATA_ROOT, DbRepository
+from db_repository import DbRepository
+from paths import DATA_ROOT
 from pipeline import Pipeline
 
 repo = DbRepository(demo=False)

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, timezone
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -43,13 +43,20 @@ class ObservationIn(BaseModel):
 
 
 class TextIn(BaseModel):
-    """Plain text submission for Gemini extraction + CAMS pipeline."""
+    """Plain text submission for Gemini extraction + CAMS pipeline.
+
+    ``source`` / ``source_type`` are accepted for dashboard compatibility but
+    IGNORED: the RBAC layer derives both from the caller's system role and
+    case_role (see rbac.source_type_for). ``visibility`` is honoured only for
+    COURT assignees (CITIZEN_VISIBLE); everyone else always gets INTERNAL.
+    """
 
     text: str
-    source: str = "user"
-    source_type: str = "unknown"
+    source: Optional[str] = None
+    source_type: Optional[str] = None
     title: Optional[str] = None
     force_fallback: bool = False
+    visibility: Optional[str] = None
 
 
 class FactorBreakdown(BaseModel):
@@ -105,6 +112,41 @@ class CaseCreate(BaseModel):
     case_id: Optional[str] = None
     title: str = "Untitled case"
     description: str = ""
+    case_type: Optional[str] = None
+    case_status: Optional[str] = None
+    filing_date: Optional[date] = None
+    court_name: Optional[str] = None
+    next_hearing_date: Optional[date] = None
+
+
+class CasePatch(BaseModel):
+    """Basic case metadata edit (COURT assignees / ADMIN)."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    case_type: Optional[str] = None
+    case_status: Optional[str] = None
+    filing_date: Optional[date] = None
+    court_name: Optional[str] = None
+    next_hearing_date: Optional[date] = None
+
+
+class AccessGrantIn(BaseModel):
+    email: str
+    case_role: str
+
+
+class SubmissionCreate(BaseModel):
+    """Citizen submission body. Text only: no extraction happens until review."""
+
+    title: str = ""
+    text: str
+
+
+class SubmissionReviewIn(BaseModel):
+    decision: Literal["APPROVE", "REJECT"]
+    note: Optional[str] = None
+    force_fallback: bool = False
 
 
 class CaseMeta(BaseModel):
