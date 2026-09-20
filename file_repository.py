@@ -302,6 +302,17 @@ class FileRepository:
                 del conflicts[fact_key]
                 self._write(case_id, "conflicts.json", conflicts)
 
+    def append_provenance(
+        self,
+        case_id: str,
+        fact_key: str,
+        history_id: str,
+        rows: List[Dict[str, Any]],
+    ) -> None:
+        """No-op: FileRepository is legacy after Task 2. DbRepository persists
+        append-only provenance rows to PostgreSQL; facts.json already embeds the
+        current provenance list, which is all the JSON path ever served."""
+
     def delete_case_dir(self, case_id: str) -> None:
         import shutil
 

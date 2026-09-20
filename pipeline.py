@@ -1,6 +1,6 @@
 """
 End-to-end pipeline:
-  text/OCR → Gemini (or fallback) → observations (JSON files) → CAMS → Digital Twin → history/conflicts
+  text/OCR → Gemini (or fallback) → observations (PostgreSQL) → CAMS → Digital Twin → history/conflicts
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from uuid import uuid4
 from cams import synchronize
 from config import DELTA, TAU, WEIGHTS
 import console_log as clog
-from file_repository import FileRepository, repo as default_repo
+from db_repository import DbRepository
 from gemini_extractor import extract_from_text
 from models import Observation
 from ocr import ocr_file
@@ -98,23 +98,23 @@ def _plain_english(decision: Any, top_factors: Optional[Dict[str, float]] = None
 
 
 class Pipeline:
-    def __init__(self, repository: Optional[FileRepository] = None) -> None:
-        self.repo = repository or default_repo
+    def __init__(self, repository: Optional[DbRepository] = None) -> None:
+        self.repo = repository or DbRepository()
 
-    def create_case(
+    async def create_case(
         self,
         case_id: Optional[str] = None,
         title: str = "Untitled case",
         description: str = "",
     ) -> Dict[str, Any]:
-        meta = self.repo.create_case(case_id=case_id, title=title, description=description)
+        meta = await self.repo.create_case(case_id=case_id, title=title, description=description)
         clog.banner("CREATE CASE", meta["case_id"])
         clog.kv("title", meta.get("title"))
         clog.kv("folder", str(self.repo.root / meta["case_id"]))
         clog.done("case folder ready (stakeholders/ + uploads/ created)")
         return meta
 
-    def ingest_text(
+    async def ingest_text(
         self,
         case_id: str,
         text: str,
@@ -124,7 +124,7 @@ class Pipeline:
         force_fallback: bool = False,
         ocr_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        self.repo.ensure_case(case_id)
+        await self.repo.ensure_case(case_id)
         now = datetime.now(timezone.utc)
         document_id = str(uuid4())
 
@@ -136,8 +136,8 @@ class Pipeline:
             clog.kv("came_from_ocr", ocr_meta.get("method"))
             clog.detail(ocr_meta.get("note") or "")
 
-        previous_obs = len(self.repo.get_observations(case_id))
-        previous_docs = len(self.repo.get_documents(case_id))
+        previous_obs = len(await self.repo.get_observations(case_id))
+        previous_docs = len(await self.repo.get_documents(case_id))
         clog.step(f"Case already has {previous_docs} documents and {previous_obs} observations (kept)")
 
         clog.banner("EXTRACTION (Gemini or fallback)", case_id)
@@ -164,9 +164,9 @@ class Pipeline:
             "extractor_note": extraction["note"],
             "ocr": ocr_meta,
         }
-        self.repo.append_document(case_id, doc)
-        clog.banner("FILE STORAGE", case_id)
-        clog.step("Appended document to documents.json (never deletes old ones)")
+        await self.repo.append_document(case_id, doc)
+        clog.banner("DATABASE STORAGE", case_id)
+        clog.step("Appended document row (never deletes old ones)")
         clog.kv(
             "stakeholder_folder",
             str(self.repo.stakeholder_dir(case_id, source_type, source)),
@@ -196,14 +196,16 @@ class Pipeline:
             new_obs.append(obs)
 
         if new_obs:
-            self.repo.append_observations(case_id, new_obs)
-            clog.step(f"Appended {len(new_obs)} observations to observations.json")
-            clog.kv("total_observations_now", len(self.repo.get_observations(case_id)))
+            await self.repo.append_observations(case_id, new_obs)
+            clog.step(f"Appended {len(new_obs)} observation rows")
+            clog.kv("total_observations_now", len(await self.repo.get_observations(case_id)))
 
         fact_keys = sorted({o["fact_key"] for o in new_obs}) or []
         decisions = []
         for fk in fact_keys:
-            decisions.append(self._run_cams_for_fact(case_id, fk, trigger_document_id=document_id))
+            decisions.append(
+                await self._run_cams_for_fact(case_id, fk, trigger_document_id=document_id)
+            )
 
         result = {
             "case_id": case_id,
@@ -215,20 +217,20 @@ class Pipeline:
             },
             "observations_created": new_obs,
             "decisions": decisions,
-            "facts": self.repo.get_facts(case_id),
-            "conflicts": self.repo.get_conflicts(case_id),
-            "history_tail": self.repo.get_history(case_id)[-len(decisions) :] if decisions else [],
-            "case_view": self.full_case_view(case_id),
+            "facts": await self.repo.get_facts(case_id),
+            "conflicts": await self.repo.get_conflicts(case_id),
+            "history_tail": (await self.repo.get_history(case_id))[-len(decisions) :] if decisions else [],
+            "case_view": await self.full_case_view(case_id),
         }
         clog.banner("CASE SNAPSHOT AFTER THIS UPDATE", case_id)
-        clog.kv("documents", len(self.repo.get_documents(case_id)))
-        clog.kv("observations", len(self.repo.get_observations(case_id)))
-        clog.kv("twin_facts", list(self.repo.get_facts(case_id).keys()))
-        clog.kv("conflicts", list(self.repo.get_conflicts(case_id).keys()) or "(none)")
+        clog.kv("documents", len(await self.repo.get_documents(case_id)))
+        clog.kv("observations", len(await self.repo.get_observations(case_id)))
+        clog.kv("twin_facts", list((await self.repo.get_facts(case_id)).keys()))
+        clog.kv("conflicts", list((await self.repo.get_conflicts(case_id)).keys()) or "(none)")
         clog.done("pipeline finished — prior case data preserved")
         return result
 
-    def ingest_upload(
+    async def ingest_upload(
         self,
         case_id: str,
         filename: str,
@@ -253,7 +255,7 @@ class Pipeline:
             preview = ocr["text"][:240].replace("\n", " / ")
             clog.detail(f"text preview: {preview}{'…' if len(ocr['text']) > 240 else ''}")
 
-        upload_record = self.repo.save_upload(
+        upload_record = await self.repo.save_upload(
             case_id=case_id,
             source_type=source_type,
             source_id=source,
@@ -273,10 +275,10 @@ class Pipeline:
                 "upload": upload_record,
                 "pipeline_ran": False,
                 "message": ocr.get("note"),
-                "case_view": self.full_case_view(case_id),
+                "case_view": await self.full_case_view(case_id),
             }
 
-        result = self.ingest_text(
+        result = await self.ingest_text(
             case_id=case_id,
             text=ocr["text"],
             source=source,
@@ -295,17 +297,19 @@ class Pipeline:
         result["pipeline_ran"] = True
         return result
 
-    def _run_cams_for_fact(
+    async def _run_cams_for_fact(
         self,
         case_id: str,
         fact_key: str,
         trigger_document_id: Optional[str] = None,
         trigger_observation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        stored = self.repo.get_observations(case_id, fact_key)
+        stored = await self.repo.get_observations(case_id, fact_key)
         observations = [_obs_from_dict(o) for o in stored]
-        timeline = [_parse_dt(o.get("event_time")) for o in self.repo.get_observations(case_id)]
-        previous = self.repo.get_fact_value(case_id, fact_key)
+        timeline = [
+            _parse_dt(o.get("event_time")) for o in await self.repo.get_observations(case_id)
+        ]
+        previous = await self.repo.get_fact_value(case_id, fact_key)
 
         clog.banner(f"CAMS — fact `{fact_key}`", case_id)
         clog.kv("observations_for_fact", len(stored))
@@ -342,82 +346,7 @@ class Pipeline:
         clog.kv("decision", "ACCEPTED" if decision.decided else "ABSTAINED")
         clog.detail(explanation)
 
-        if decision.decided:
-            provenance = []
-            by_id = {o["observation_id"]: o for o in stored}
-            for oid in supporting:
-                if oid in by_id:
-                    o = by_id[oid]
-                    provenance.append(
-                        {
-                            "observation_id": oid,
-                            "source": o.get("source") or o.get("source_id"),
-                            "source_type": o.get("source_type"),
-                            "value": o.get("value"),
-                            "evidence": o.get("evidence"),
-                            "document_id": o.get("document_id"),
-                        }
-                    )
-            self.repo.set_fact(
-                case_id,
-                fact_key,
-                {
-                    "fact_key": fact_key,
-                    "value": decision.accepted_value,
-                    "status": "resolved",
-                    "confidence": decision.C1,
-                    "last_updated": datetime.now(timezone.utc).isoformat(),
-                    "supporting_observation_ids": supporting,
-                    "provenance": provenance,
-                },
-            )
-            self.repo.clear_conflict(case_id, fact_key)
-            clog.step("Digital Twin updated in facts.json")
-        else:
-            competing = []
-            for c in decision.candidates:
-                competing.append(
-                    {
-                        "value": c.value,
-                        "confidence": c.confidence,
-                        "factors": c.factors.model_dump(),
-                        "supporting_observation_ids": c.supporting_observation_ids,
-                        "supporting_source_ids": c.supporting_source_ids,
-                    }
-                )
-            self.repo.set_conflict(
-                case_id,
-                fact_key,
-                {
-                    "fact_key": fact_key,
-                    "status": "unresolved",
-                    "reason": decision.message,
-                    "explanation": explanation,
-                    "previous_value": previous,
-                    "C1": decision.C1,
-                    "C2": decision.C2,
-                    "margin": decision.margin,
-                    "candidates": competing,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-            facts = self.repo.get_facts(case_id)
-            if fact_key not in facts:
-                self.repo.set_fact(
-                    case_id,
-                    fact_key,
-                    {
-                        "fact_key": fact_key,
-                        "value": previous,
-                        "status": "unresolved",
-                        "confidence": decision.C1,
-                        "last_updated": datetime.now(timezone.utc).isoformat(),
-                        "supporting_observation_ids": supporting,
-                        "provenance": [],
-                    },
-                )
-            clog.step("ABSTAIN: twin value NOT overwritten; conflict stored in conflicts.json")
-
+        # History is appended first so provenance rows can reference it.
         history_entry = {
             "history_id": str(uuid4()),
             "case_id": case_id,
@@ -441,47 +370,127 @@ class Pipeline:
             "trigger_document_id": trigger_document_id,
             "trigger_observation_id": trigger_observation_id,
         }
-        self.repo.append_history(case_id, history_entry)
-        clog.step("Appended decision to history.json")
+        await self.repo.append_history(case_id, history_entry)
+
+        if decision.decided:
+            provenance = []
+            by_id = {o["observation_id"]: o for o in stored}
+            for oid in supporting:
+                if oid in by_id:
+                    o = by_id[oid]
+                    provenance.append(
+                        {
+                            "observation_id": oid,
+                            "source": o.get("source") or o.get("source_id"),
+                            "source_type": o.get("source_type"),
+                            "value": o.get("value"),
+                            "evidence": o.get("evidence"),
+                            "document_id": o.get("document_id"),
+                        }
+                    )
+            await self.repo.set_fact(
+                case_id,
+                fact_key,
+                {
+                    "fact_key": fact_key,
+                    "value": decision.accepted_value,
+                    "status": "resolved",
+                    "confidence": decision.C1,
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                    "supporting_observation_ids": supporting,
+                    "provenance": provenance,
+                },
+            )
+            await self.repo.append_provenance(
+                case_id, fact_key, history_entry["history_id"], provenance
+            )
+            await self.repo.clear_conflict(case_id, fact_key)
+            clog.step("Digital Twin updated in PostgreSQL")
+        else:
+            competing = []
+            for c in decision.candidates:
+                competing.append(
+                    {
+                        "value": c.value,
+                        "confidence": c.confidence,
+                        "factors": c.factors.model_dump(),
+                        "supporting_observation_ids": c.supporting_observation_ids,
+                        "supporting_source_ids": c.supporting_source_ids,
+                    }
+                )
+            await self.repo.set_conflict(
+                case_id,
+                fact_key,
+                {
+                    "fact_key": fact_key,
+                    "status": "unresolved",
+                    "reason": decision.message,
+                    "explanation": explanation,
+                    "previous_value": previous,
+                    "C1": decision.C1,
+                    "C2": decision.C2,
+                    "margin": decision.margin,
+                    "candidates": competing,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            facts = await self.repo.get_facts(case_id)
+            if fact_key not in facts:
+                await self.repo.set_fact(
+                    case_id,
+                    fact_key,
+                    {
+                        "fact_key": fact_key,
+                        "value": previous,
+                        "status": "unresolved",
+                        "confidence": decision.C1,
+                        "last_updated": datetime.now(timezone.utc).isoformat(),
+                        "supporting_observation_ids": supporting,
+                        "provenance": [],
+                    },
+                )
+            clog.step("ABSTAIN: twin value NOT overwritten; conflict stored in PostgreSQL")
+
+        clog.step("Appended decision to sync_history")
         return history_entry
 
-    def resync(self, case_id: str) -> Dict[str, Any]:
-        self.repo.ensure_case(case_id)
-        keys = sorted({o["fact_key"] for o in self.repo.get_observations(case_id)})
+    async def resync(self, case_id: str) -> Dict[str, Any]:
+        await self.repo.ensure_case(case_id)
+        keys = sorted({o["fact_key"] for o in await self.repo.get_observations(case_id)})
         clog.banner("RESYNC ALL FACTS FROM STORED OBSERVATIONS", case_id)
         clog.kv("fact_keys", keys)
-        decisions = [self._run_cams_for_fact(case_id, fk) for fk in keys]
+        decisions = [await self._run_cams_for_fact(case_id, fk) for fk in keys]
         return {
             "case_id": case_id,
             "decisions": decisions,
-            "facts": self.repo.get_facts(case_id),
-            "conflicts": self.repo.get_conflicts(case_id),
-            "case_view": self.full_case_view(case_id),
+            "facts": await self.repo.get_facts(case_id),
+            "conflicts": await self.repo.get_conflicts(case_id),
+            "case_view": await self.full_case_view(case_id),
         }
 
-    def case_snapshot(self, case_id: str) -> Dict[str, Any]:
-        meta = self.repo.get_case(case_id)
+    async def case_snapshot(self, case_id: str) -> Dict[str, Any]:
+        meta = await self.repo.get_case(case_id)
         return {
             **meta,
-            "facts": self.repo.get_facts(case_id),
-            "conflicts": self.repo.get_conflicts(case_id),
-            "observation_count": len(self.repo.get_observations(case_id)),
-            "document_count": len(self.repo.get_documents(case_id)),
-            "history_count": len(self.repo.get_history(case_id)),
-            "stakeholders": self.repo.list_stakeholders(case_id),
+            "facts": await self.repo.get_facts(case_id),
+            "conflicts": await self.repo.get_conflicts(case_id),
+            "observation_count": len(await self.repo.get_observations(case_id)),
+            "document_count": len(await self.repo.get_documents(case_id)),
+            "history_count": len(await self.repo.get_history(case_id)),
+            "stakeholders": await self.repo.list_stakeholders(case_id),
         }
 
-    def full_case_view(self, case_id: str) -> Dict[str, Any]:
+    async def full_case_view(self, case_id: str) -> Dict[str, Any]:
         """
         Continuous case board: everything for this case_id, chronological.
         """
-        self.repo.ensure_case(case_id)
-        docs = self.repo.get_documents(case_id)
-        obs = self.repo.get_observations(case_id)
-        history = self.repo.get_history(case_id)
-        facts = self.repo.get_facts(case_id)
-        conflicts = self.repo.get_conflicts(case_id)
-        stakeholders = self.repo.list_stakeholders(case_id)
+        await self.repo.ensure_case(case_id)
+        docs = await self.repo.get_documents(case_id)
+        obs = await self.repo.get_observations(case_id)
+        history = await self.repo.get_history(case_id)
+        facts = await self.repo.get_facts(case_id)
+        conflicts = await self.repo.get_conflicts(case_id)
+        stakeholders = await self.repo.list_stakeholders(case_id)
 
         timeline = []
         for d in docs:
@@ -516,7 +525,7 @@ class Pipeline:
         timeline.sort(key=lambda x: x.get("at") or "")
 
         return {
-            "case": self.repo.get_case(case_id),
+            "case": await self.repo.get_case(case_id),
             "summary": {
                 "documents": len(docs),
                 "observations": len(obs),
@@ -535,11 +544,15 @@ class Pipeline:
             "storage_hint": str(self.repo.root / case_id),
         }
 
-    def provenance(self, case_id: str) -> Dict[str, Any]:
-        facts = self.repo.get_facts(case_id)
-        obs_by_id = {o["observation_id"]: o for o in self.repo.get_observations(case_id)}
-        docs_by_id = {d["document_id"]: d for d in self.repo.get_documents(case_id)}
-        history = self.repo.get_history(case_id)
+    async def provenance(self, case_id: str) -> Dict[str, Any]:
+        facts = await self.repo.get_facts(case_id)
+        obs_by_id = {
+            o["observation_id"]: o for o in await self.repo.get_observations(case_id)
+        }
+        docs_by_id = {
+            d["document_id"]: d for d in await self.repo.get_documents(case_id)
+        }
+        history = await self.repo.get_history(case_id)
 
         out: Dict[str, Any] = {}
         for fact_key, fact in facts.items():

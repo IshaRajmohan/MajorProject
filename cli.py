@@ -8,15 +8,22 @@ in this terminal. Real case data: data/cases/<case_id>/ only.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
 import console_log as clog
-from file_repository import DATA_ROOT, repo
+from db_repository import DATA_ROOT, DbRepository
 from pipeline import Pipeline
 
+repo = DbRepository(demo=False)
 pipe = Pipeline(repository=repo)
 ACTIVE: str | None = None
+_runner = asyncio.Runner()
+
+
+def wait(coro):
+    return _runner.run(coro)
 
 
 def case_path(case_id: str) -> Path:
@@ -60,7 +67,7 @@ def action_create() -> None:
     show_active()
     case_id = input("Case ID (blank = auto): ").strip() or None
     title = input("Title (optional): ").strip() or (case_id or "Untitled case")
-    meta = pipe.create_case(case_id=case_id, title=title, description="Created via cli.py")
+    meta = wait(pipe.create_case(case_id=case_id, title=title, description="Created via cli.py"))
     ACTIVE = meta["case_id"]
     show_active()
     clog.done(f"case ready at {case_path(ACTIVE).resolve()}")
@@ -69,7 +76,7 @@ def action_create() -> None:
 def action_select() -> None:
     global ACTIVE
     show_active()
-    cases = repo.list_cases()
+    cases = wait(repo.list_cases())
     if not cases:
         clog.detail("No cases on disk yet — create one first.")
         return
@@ -82,7 +89,7 @@ def action_select() -> None:
         clog.detail("Cancelled.")
         return
     try:
-        repo.get_case(case_id)
+        wait(repo.get_case(case_id))
     except KeyError:
         clog.detail(f"Case not found: {case_id}")
         return
@@ -99,7 +106,7 @@ def action_add_text() -> None:
         if not ACTIVE:
             clog.detail("Cancelled.")
             return
-        pipe.create_case(case_id=ACTIVE, title=ACTIVE)
+        wait(pipe.create_case(case_id=ACTIVE, title=ACTIVE))
     show_active()
     source = input("Source ID [police-ps12]: ").strip() or "police-ps12"
     source_type = input("Source type [police]: ").strip() or "police"
@@ -116,12 +123,14 @@ def action_add_text() -> None:
         return
     force = input("Force rule-based fallback? [y/N]: ").strip().lower().startswith("y")
     show_active()
-    pipe.ingest_text(
-        ACTIVE,
-        text=text,
-        source=source,
-        source_type=source_type,
-        force_fallback=force,
+    wait(
+        pipe.ingest_text(
+            ACTIVE,
+            text=text,
+            source=source,
+            source_type=source_type,
+            force_fallback=force,
+        )
     )
     action_view_twin()
 
@@ -134,7 +143,7 @@ def action_ingest_file() -> None:
         if not ACTIVE:
             clog.detail("Cancelled.")
             return
-        pipe.create_case(case_id=ACTIVE, title=ACTIVE)
+        wait(pipe.create_case(case_id=ACTIVE, title=ACTIVE))
     show_active()
     path_str = input("Path to file: ").strip()
     path = Path(path_str).expanduser()
@@ -146,14 +155,16 @@ def action_ingest_file() -> None:
     force = input("Force rule-based fallback? [y/N]: ").strip().lower().startswith("y")
     show_active()
     data = path.read_bytes()
-    pipe.ingest_upload(
-        ACTIVE,
-        filename=path.name,
-        data=data,
-        source=source,
-        source_type=source_type,
-        force_fallback=force,
-        title=path.name,
+    wait(
+        pipe.ingest_upload(
+            ACTIVE,
+            filename=path.name,
+            data=data,
+            source=source,
+            source_type=source_type,
+            force_fallback=force,
+            title=path.name,
+        )
     )
     action_view_twin()
 
@@ -163,8 +174,8 @@ def action_view_twin() -> None:
     if not ACTIVE:
         clog.detail("No active case.")
         return
-    facts = repo.get_facts(ACTIVE)
-    conflicts = repo.get_conflicts(ACTIVE)
+    facts = wait(repo.get_facts(ACTIVE))
+    conflicts = wait(repo.get_conflicts(ACTIVE))
     clog.banner("JUSTICE TWIN", ACTIVE)
     clog.kv("folder", str(case_path(ACTIVE).resolve()))
     if not facts and not conflicts:
@@ -194,7 +205,7 @@ def action_view_conflicts() -> None:
     if not ACTIVE:
         clog.detail("No active case.")
         return
-    conflicts = repo.get_conflicts(ACTIVE)
+    conflicts = wait(repo.get_conflicts(ACTIVE))
     clog.banner("UNRESOLVED CONFLICTS", ACTIVE)
     clog.kv("folder", str(case_path(ACTIVE).resolve()))
     if not conflicts:
@@ -211,7 +222,7 @@ def action_view_history() -> None:
     if not ACTIVE:
         clog.detail("No active case.")
         return
-    view = pipe.full_case_view(ACTIVE)
+    view = wait(pipe.full_case_view(ACTIVE))
     clog.banner("FULL CASE VIEW", ACTIVE)
     clog.kv("folder", view.get("storage_hint"))
     clog.kv("summary", view.get("summary"))
@@ -233,7 +244,7 @@ def action_view_history() -> None:
 
 def action_list() -> None:
     show_active()
-    cases = repo.list_cases()
+    cases = wait(repo.list_cases())
     clog.banner("CASES ON DISK")
     clog.kv("root", str(DATA_ROOT.resolve()))
     if not cases:
@@ -291,14 +302,16 @@ def run_smoke(case_id: str = "CLI-WEB-VERIFY") -> None:
     global ACTIVE
     ACTIVE = case_id
     show_active()
-    pipe.create_case(case_id=ACTIVE, title="CLI↔web verify case")
+    wait(pipe.create_case(case_id=ACTIVE, title="CLI↔web verify case"))
     show_active()
-    pipe.ingest_text(
-        ACTIVE,
-        text="Charge: IPC 302\nWeapon: knife\nLocation: Mumbai\n",
-        source="police-ps12",
-        source_type="police",
-        force_fallback=True,
+    wait(
+        pipe.ingest_text(
+            ACTIVE,
+            text="Charge: IPC 302\nWeapon: knife\nLocation: Mumbai\n",
+            source="police-ps12",
+            source_type="police",
+            force_fallback=True,
+        )
     )
     show_active()
     action_view_twin()
@@ -307,8 +320,11 @@ def run_smoke(case_id: str = "CLI-WEB-VERIFY") -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--smoke":
-        cid = sys.argv[2] if len(sys.argv) > 2 else "CLI-WEB-VERIFY"
-        run_smoke(cid)
-        sys.exit(0)
-    main()
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == "--smoke":
+            cid = sys.argv[2] if len(sys.argv) > 2 else "CLI-WEB-VERIFY"
+            run_smoke(cid)
+            sys.exit(0)
+        main()
+    finally:
+        _runner.close()

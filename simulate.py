@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
 """
-Qualitative CAMS demo — uses Pipeline + data/demo_cases/ directly (no HTTP).
-Never writes to data/cases/.
+Qualitative CAMS demo — uses Pipeline + demo-scoped PostgreSQL (no HTTP).
+Never writes to real (is_demo=False) cases. Upload bytes under data/demo_cases/.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import asyncio
+from datetime import datetime, timezone
 
 import console_log as clog
-from file_repository import DEMO_DATA_ROOT, demo_repo
+from db_repository import DEMO_DATA_ROOT, DbRepository
 from pipeline import Pipeline
 
-pipe = Pipeline(repository=demo_repo)
+repo = DbRepository(demo=True)
+pipe = Pipeline(repository=repo)
 
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def run() -> None:
+async def run() -> None:
     clog.banner("QUALITATIVE SIMULATE (demo storage only)")
     clog.kv("demo_root", str(DEMO_DATA_ROOT.resolve()))
-    clog.detail("Real user cases under data/cases/ are NOT touched.")
+    clog.detail("Real user cases are NOT touched.")
 
-    demo_repo.reset_all()
+    await repo.reset_all()
     scenarios = [
         (
             "demo-conflict",
@@ -61,16 +63,16 @@ def run() -> None:
     ]
 
     for case_id, _fact, docs in scenarios:
-        pipe.create_case(case_id, title=case_id)
+        await pipe.create_case(case_id, title=case_id)
         for d in docs:
-            pipe.ingest_text(
+            await pipe.ingest_text(
                 case_id,
                 text=d["text"],
                 source=d["source"],
                 source_type=d["source_type"],
                 force_fallback=True,
             )
-        twin = demo_repo.get_facts(case_id)
+        twin = await repo.get_facts(case_id)
         clog.banner("TWIN AFTER SCENARIO", case_id)
         for k, v in twin.items():
             clog.detail(f"{k} = {v.get('value')!r} ({v.get('status')})")
@@ -79,4 +81,4 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    asyncio.run(run())

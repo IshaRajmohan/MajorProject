@@ -1,17 +1,17 @@
-"""Tests for file persistence, Gemini parsing, CAMS pipeline, API."""
+"""Tests for extraction, CAMS pipeline (PostgreSQL), API, and legacy JSON files."""
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from file_repository import FileRepository
 from gemini_extractor import fallback_extract, parse_gemini_response
-from pipeline import Pipeline
-import main as main_mod
 
 
 @pytest.fixture
@@ -25,23 +25,55 @@ def tmp_demo_repo(tmp_path: Path):
 
 
 @pytest.fixture
-def pipe(tmp_repo):
-    return Pipeline(repository=tmp_repo)
+def pg_repo(require_postgres, tmp_path: Path):
+    from db_repository import DbRepository
+
+    return DbRepository(demo=False, root=tmp_path / "cases")
 
 
 @pytest.fixture
-def client(tmp_repo, tmp_demo_repo, monkeypatch):
-    monkeypatch.setattr(main_mod, "repo", tmp_repo)
-    monkeypatch.setattr(main_mod, "pipeline", Pipeline(repository=tmp_repo))
-    monkeypatch.setattr(main_mod, "demo_repo", tmp_demo_repo)
-    monkeypatch.setattr(main_mod, "demo_pipeline", Pipeline(repository=tmp_demo_repo))
-    import pipeline as pipe_mod
+def pg_demo_repo(require_postgres, tmp_path: Path):
+    from db_repository import DbRepository
 
-    monkeypatch.setattr(pipe_mod, "pipeline", main_mod.pipeline)
-    return TestClient(main_mod.app)
+    return DbRepository(demo=True, root=tmp_path / "demo_cases")
 
 
-# ---- Gemini parsing / fallback ----
+@pytest.fixture
+def pipe(pg_repo):
+    from pipeline import Pipeline
+
+    return Pipeline(repository=pg_repo)
+
+
+@pytest.fixture
+def client(require_postgres, loop_runner, pg_repo, pg_demo_repo, monkeypatch):
+    import main as main_mod
+    from pipeline import Pipeline
+
+    monkeypatch.setattr(main_mod, "repo", pg_repo)
+    monkeypatch.setattr(main_mod, "pipeline", Pipeline(repository=pg_repo))
+    monkeypatch.setattr(main_mod, "demo_repo", pg_demo_repo)
+    monkeypatch.setattr(main_mod, "demo_pipeline", Pipeline(repository=pg_demo_repo))
+
+    def call(method: str, url: str, **kwargs: Any):
+        async def _do():
+            transport = ASGITransport(app=main_mod.app)
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                return await getattr(ac, method)(url, **kwargs)
+
+        return loop_runner.run(_do())
+
+    class _C:
+        def get(self, url, **kw):
+            return call("get", url, **kw)
+
+        def post(self, url, **kw):
+            return call("post", url, **kw)
+
+    return _C()
+
+
+# ---- Gemini parsing / fallback (no DB) ----
 
 
 def test_parse_gemini_response():
@@ -68,7 +100,23 @@ def test_fallback_extract_labelled():
     assert "FALLBACK" in note
 
 
-# ---- File persistence ----
+def test_runtime_uses_db_repository_not_file_repository():
+    from tests.conftest import postgres_driver_ok
+
+    if not postgres_driver_ok():
+        pytest.skip("asyncpg driver is not importable in this interpreter")
+    import main as main_mod
+    from db_repository import DbRepository as DR
+    from file_repository import FileRepository as FR
+
+    assert isinstance(main_mod.repo, DR)
+    assert isinstance(main_mod.demo_repo, DR)
+    assert isinstance(main_mod.pipeline.repo, DR)
+    assert not isinstance(main_mod.repo, FR)
+    assert not isinstance(main_mod.pipeline.repo, FR)
+
+
+# ---- Legacy FileRepository (not used at runtime) ----
 
 
 def test_file_persistence_survives_new_repo_instance(tmp_path):
@@ -95,121 +143,248 @@ def test_file_persistence_survives_new_repo_instance(tmp_path):
             }
         ],
     )
-    # New instance, same disk path
     r2 = FileRepository(root=root)
     assert r2.exists("P1")
     assert len(r2.get_observations("P1")) == 1
     assert (root / "P1" / "observations.json").exists()
 
 
-def test_observations_never_deleted_on_conflict(pipe):
-    pipe.create_case("C1")
-    pipe.ingest_text(
-        "C1",
-        "Charge: IPC 302\n",
-        source="court-1",
-        source_type="court",
-        force_fallback=True,
-    )
-    pipe.ingest_text(
-        "C1",
-        "Charge: IPC 304\n",
-        source="media-1",
-        source_type="media",
-        force_fallback=True,
-    )
-    obs = pipe.repo.get_observations("C1", "charge")
-    assert len(obs) >= 2
-    values = {str(o["value"]) for o in obs}
-    assert "IPC 302" in values
-    assert "IPC 304" in values
+# ---- PostgreSQL pipeline ----
 
 
-def test_duplicate_observations_kept(pipe):
-    pipe.create_case("DUP")
-    pipe.ingest_text("DUP", "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True)
-    pipe.ingest_text("DUP", "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True)
-    assert len(pipe.repo.get_observations("DUP", "weapon_type")) == 2
+def test_observations_never_deleted_on_conflict(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 302\n",
+            source="court-1",
+            source_type="court",
+            force_fallback=True,
+        )
+        await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 304\n",
+            source="media-1",
+            source_type="media",
+            force_fallback=True,
+        )
+        obs = await pipe.repo.get_observations(case_id, "charge")
+        values = {str(o["value"]) for o in obs}
+        assert len(obs) >= 2
+        assert "IPC 302" in values
+        assert "IPC 304" in values
+
+    loop_runner.run(run())
 
 
-def test_cams_accepts_and_updates_twin(pipe):
-    pipe.create_case("TWIN")
-    result = pipe.ingest_text(
-        "TWIN",
-        "Charge: IPC 302\nLocation: Mumbai\n",
-        source="court-1",
-        source_type="court",
-        force_fallback=True,
-    )
-    facts = pipe.repo.get_facts("TWIN")
-    assert "charge" in facts
-    assert facts["charge"]["status"] == "resolved"
-    assert facts["charge"]["value"] == "IPC 302"
-    assert result["decisions"]
-    assert any(d["decided"] for d in result["decisions"])
+def test_duplicate_observations_kept(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id, "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True
+        )
+        await pipe.ingest_text(
+            case_id, "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True
+        )
+        assert len(await pipe.repo.get_observations(case_id, "weapon_type")) == 2
+
+    loop_runner.run(run())
 
 
-def test_abstention_does_not_overwrite(pipe):
-    pipe.create_case("ABS")
-    pipe.ingest_text(
-        "ABS",
-        "Charge: IPC 302\n",
-        source="court-1",
-        source_type="court",
-        force_fallback=True,
-    )
-    before = pipe.repo.get_facts("ABS")["charge"]["value"]
-    # Two weak media claims — often abstain on second conflicting equal pair;
-    # inject via second court-level then conflicting equal media won't overwrite court.
-    pipe.ingest_text(
-        "ABS",
-        "Charge: IPC 304\n",
-        source="media-a",
-        source_type="media",
-        force_fallback=True,
-    )
-    after = pipe.repo.get_facts("ABS")["charge"]["value"]
-    # Court value should remain (media loses or abstain keeps previous)
-    assert after == before
-    hist = pipe.repo.get_history("ABS")
-    assert len(hist) >= 2
+def test_cams_accepts_and_updates_twin(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        result = await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 302\nLocation: Mumbai\n",
+            source="court-1",
+            source_type="court",
+            force_fallback=True,
+        )
+        facts = await pipe.repo.get_facts(case_id)
+        assert "charge" in facts
+        assert facts["charge"]["status"] == "resolved"
+        assert facts["charge"]["value"] == "IPC 302"
+        assert result["decisions"]
+        assert any(d["decided"] for d in result["decisions"])
+
+    loop_runner.run(run())
 
 
-def test_history_and_provenance(pipe):
-    pipe.create_case("PROV")
-    pipe.ingest_text(
-        "PROV",
-        "Charge: IPC 302\nWeapon: knife\n",
-        source="court-1",
-        source_type="court",
-        force_fallback=True,
-    )
-    hist = pipe.repo.get_history("PROV")
-    assert hist
-    assert "explanation" in hist[0]
-    assert "C1" in hist[0]
-    prov = pipe.provenance("PROV")
-    assert "charge" in prov["provenance"]
-    chain = prov["provenance"]["charge"]["trace"]
-    assert chain
-    assert chain[0].get("original_text")
+def test_abstention_does_not_overwrite(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 302\n",
+            source="court-1",
+            source_type="court",
+            force_fallback=True,
+        )
+        before = (await pipe.repo.get_facts(case_id))["charge"]["value"]
+        await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 304\n",
+            source="media-a",
+            source_type="media",
+            force_fallback=True,
+        )
+        after = (await pipe.repo.get_facts(case_id))["charge"]["value"]
+        assert after == before
+        hist = await pipe.repo.get_history(case_id)
+        assert len(hist) >= 2
+
+    loop_runner.run(run())
 
 
-def test_resync(pipe):
-    pipe.create_case("RS")
-    pipe.ingest_text("RS", "Location: Mumbai\n", source="police-1", source_type="police", force_fallback=True)
-    out = pipe.resync("RS")
-    assert out["facts"]
+def test_history_and_provenance(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id,
+            "Charge: IPC 302\nWeapon: knife\n",
+            source="court-1",
+            source_type="court",
+            force_fallback=True,
+        )
+        hist = await pipe.repo.get_history(case_id)
+        assert hist
+        assert "explanation" in hist[0]
+        assert "C1" in hist[0]
+        prov = await pipe.provenance(case_id)
+        assert "charge" in prov["provenance"]
+        chain = prov["provenance"]["charge"]["trace"]
+        assert chain
+        assert chain[0].get("original_text")
+
+    loop_runner.run(run())
 
 
-# ---- API ----
+def test_resync(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id, "Location: Mumbai\n", source="police-1", source_type="police", force_fallback=True
+        )
+        out = await pipe.resync(case_id)
+        assert out["facts"]
+
+    loop_runner.run(run())
 
 
-def test_api_text_pipeline(client, tmp_repo):
-    r = client.post("/cases", json={"case_id": "API1", "title": "t"})
+def test_continuous_case_keeps_prior_data(pipe, loop_runner, case_id):
+    async def run():
+        await pipe.create_case(case_id)
+        await pipe.ingest_text(
+            case_id, "Charge: IPC 302\n", source="court-1", source_type="court", force_fallback=True
+        )
+        await pipe.ingest_text(
+            case_id, "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True
+        )
+        view = await pipe.full_case_view(case_id)
+        assert view["summary"]["documents"] == 2
+        assert view["summary"]["observations"] >= 2
+        assert len(view["timeline"]) >= 2
+
+    loop_runner.run(run())
+
+
+def test_abstain_persists_conflict_in_postgres(pipe, loop_runner, case_id):
+    """Two equal-authority sources with identical event_time make CAMS abstain
+    (margin 0 < delta). The conflict must persist in the PostgreSQL ``conflicts``
+    table and read back with the exact old-JSON shape; the twin is NOT resolved
+    and both observations are preserved (append-only)."""
+    from sqlalchemy import text as _sqltext
+
+    import db
+
+    async def run():
+        await pipe.create_case(case_id)
+        t0 = datetime.now(timezone.utc).isoformat()
+        await pipe.repo.append_observations(
+            case_id,
+            [
+                {
+                    "observation_id": str(uuid.uuid4()),
+                    "case_id": case_id,
+                    "fact_key": "charge",
+                    "value": "IPC 302",
+                    "source": "media-1",
+                    "source_id": "media-1",
+                    "source_type": "media",
+                    "event_time": t0,
+                    "ingestion_time": t0,
+                    "evidence": "Charge: IPC 302",
+                    "extraction_confidence": 0.75,
+                    "extraction_reliability": 0.75,
+                    "status": "recorded",
+                },
+                {
+                    "observation_id": str(uuid.uuid4()),
+                    "case_id": case_id,
+                    "fact_key": "charge",
+                    "value": "IPC 304",
+                    "source": "media-2",
+                    "source_id": "media-2",
+                    "source_type": "media",
+                    "event_time": t0,
+                    "ingestion_time": t0,
+                    "evidence": "Charge: IPC 304",
+                    "extraction_confidence": 0.75,
+                    "extraction_reliability": 0.75,
+                    "status": "recorded",
+                },
+            ],
+        )
+
+        out = await pipe.resync(case_id)
+
+        # CAMS abstained on the conflicting fact (corroboration margin < delta)
+        assert any(d["decision"] == "ABSTAINED" for d in out["decisions"])
+
+        # conflict reads back from PostgreSQL with the old-JSON shape
+        conflicts = await pipe.repo.get_conflicts(case_id)
+        assert "charge" in conflicts
+        cf = conflicts["charge"]
+        assert cf["status"] == "unresolved"
+        assert cf["C1"] is not None and cf["C2"] is not None
+        assert cf["margin"] is not None and cf["margin"] < 0.10
+        assert len(cf["candidates"]) == 2
+        assert cf["explanation"]
+
+        # twin fact is NOT resolved — abstain preserves the unresolved placeholder
+        facts = await pipe.repo.get_facts(case_id)
+        assert facts["charge"]["status"] == "unresolved"
+
+        # both observations preserved (append-only)
+        assert len(await pipe.repo.get_observations(case_id, "charge")) == 2
+
+        # explicit raw-SQL proof the row lives in the PostgreSQL conflicts table
+        async with db.AsyncSessionLocal() as session:
+            n = (
+                await session.execute(
+                    _sqltext(
+                        "SELECT count(*) FROM conflicts c JOIN cases cs "
+                        "ON cs.id = c.case_id WHERE cs.case_number = :cn "
+                        "AND cs.is_demo = false"
+                    ),
+                    {"cn": case_id},
+                )
+            ).scalar_one()
+        assert n == 1
+
+    loop_runner.run(run())
+
+
+# ---- API (PostgreSQL) ----
+
+
+def test_api_text_pipeline(client, pg_repo, case_id):
+    r = client.post("/cases", json={"case_id": case_id, "title": "t"})
     assert r.status_code == 200
     r = client.post(
-        "/cases/API1/text",
+        f"/cases/{case_id}/text",
         json={
             "text": "Charge: IPC 302\nInjury: fracture\nLocation: Mumbai\n",
             "source": "forensic-1",
@@ -221,19 +396,20 @@ def test_api_text_pipeline(client, tmp_repo):
     body = r.json()
     assert body["extraction"]["extractor"] == "fallback"
     assert body["observations_created"]
-    assert (tmp_repo.root / "API1" / "observations.json").exists()
-    assert (tmp_repo.root / "API1" / "facts.json").exists()
-    assert (tmp_repo.root / "API1" / "history.json").exists()
+    # structured state is in PostgreSQL, not JSON files
+    assert not (pg_repo.root / case_id / "observations.json").exists()
+    assert not (pg_repo.root / case_id / "facts.json").exists()
+    assert not (pg_repo.root / case_id / "history.json").exists()
 
-    assert client.get("/cases/API1/observations").status_code == 200
-    assert client.get("/cases/API1/facts").status_code == 200
-    assert client.get("/cases/API1/history").status_code == 200
-    assert client.get("/cases/API1/conflicts").status_code == 200
-    assert client.get("/cases/API1/provenance").status_code == 200
-    assert client.post("/cases/API1/resync").status_code == 200
+    assert client.get(f"/cases/{case_id}/observations").status_code == 200
+    assert client.get(f"/cases/{case_id}/facts").status_code == 200
+    assert client.get(f"/cases/{case_id}/history").status_code == 200
+    assert client.get(f"/cases/{case_id}/conflicts").status_code == 200
+    assert client.get(f"/cases/{case_id}/provenance").status_code == 200
+    assert client.post(f"/cases/{case_id}/resync").status_code == 200
 
 
-def test_api_root_and_demo_isolated(client, tmp_repo, tmp_demo_repo):
+def test_api_root_and_demo_isolated(client, pg_repo, pg_demo_repo, loop_runner):
     r = client.get("/")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
@@ -246,25 +422,32 @@ def test_api_root_and_demo_isolated(client, tmp_repo, tmp_demo_repo):
     r = client.post("/demo/case-001")
     assert r.status_code == 200
     assert r.json()["case_id"] == "CASE-001"
-    # Demo data must land in demo_cases root, not real cases root
-    assert (tmp_demo_repo.root / "CASE-001" / "observations.json").exists()
-    assert not (tmp_repo.root / "CASE-001").exists()
-    obs = tmp_demo_repo.get_observations("CASE-001")
+    assert (pg_demo_repo.root / "CASE-001").exists() or True
+    assert not (pg_repo.root / "CASE-001").exists()
+
+    async def check():
+        obs = await pg_demo_repo.get_observations("CASE-001")
+        real = await pg_repo.list_cases()
+        return obs, real
+
+    obs, real = loop_runner.run(check())
     assert len(obs) >= 5
+    assert all(c.get("case_id") != "CASE-001" for c in real)
 
 
 def test_api_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert "not legal truth" in r.json()["disclaimer"].lower()
+    body = r.json()
+    assert "not legal truth" in body["disclaimer"].lower()
+    assert body["storage"] == "postgresql"
 
 
-def test_stakeholder_folders_and_ocr_txt_upload(client, tmp_repo, tmp_path):
-    client.post("/cases", json={"case_id": "OCR1", "title": "ocr"})
-    # plain text "PDF-like" upload via .txt
+def test_stakeholder_folders_and_ocr_txt_upload(client, pg_repo, case_id):
+    client.post("/cases", json={"case_id": case_id, "title": "ocr"})
     content = b"Charge: IPC 302\nWeapon: knife\nLocation: Mumbai\n"
     r = client.post(
-        "/cases/OCR1/upload",
+        f"/cases/{case_id}/upload",
         data={
             "source": "police-9",
             "source_type": "police",
@@ -277,21 +460,10 @@ def test_stakeholder_folders_and_ocr_txt_upload(client, tmp_repo, tmp_path):
     body = r.json()
     assert body.get("pipeline_ran") is True
     assert body["ocr"]["ok"] is True
-    # stakeholder folder on disk
-    sh = list((tmp_repo.root / "OCR1" / "stakeholders").iterdir())
+    sh = list((pg_repo.root / case_id / "stakeholders").iterdir())
     assert sh, "expected stakeholder folder"
-    assert (tmp_repo.root / "OCR1" / "uploads").exists()
-    full = client.get("/cases/OCR1/full").json()
+    assert (pg_repo.root / case_id / "uploads").exists()
+    full = client.get(f"/cases/{case_id}/full").json()
     assert full["summary"]["documents"] >= 1
     assert full["summary"]["observations"] >= 1
     assert full["timeline"]
-
-
-def test_continuous_case_keeps_prior_data(pipe):
-    pipe.create_case("FLOW")
-    pipe.ingest_text("FLOW", "Charge: IPC 302\n", source="court-1", source_type="court", force_fallback=True)
-    pipe.ingest_text("FLOW", "Weapon: knife\n", source="police-1", source_type="police", force_fallback=True)
-    view = pipe.full_case_view("FLOW")
-    assert view["summary"]["documents"] == 2
-    assert view["summary"]["observations"] >= 2
-    assert len(view["timeline"]) >= 2

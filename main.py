@@ -1,13 +1,15 @@
 """
 NyayaOS-lite FastAPI — case dashboard API + static UI.
 
-Real cases  → data/cases/
-Demo cases  → data/demo_cases/   (never mixed)
-Web UI      → frontend/ (served at /)
+Structured case/CAMS state lives in PostgreSQL (DbRepository).
+Physical upload bytes stay under data/cases/ and data/demo_cases/.
+The legacy JSON FileRepository is not used at runtime.
+Web UI → frontend/ (served at /)
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -15,7 +17,9 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from auth import router as auth_router
 from config import DELTA, TAU, WEIGHTS
+from db_repository import DATA_ROOT, DEMO_DATA_ROOT, DbRepository
 from demo_data import (
     CASE_001_DESCRIPTION,
     CASE_001_ID,
@@ -23,32 +27,44 @@ from demo_data import (
     case_001_documents,
     scenario_document,
 )
-from file_repository import DEMO_DATA_ROOT, demo_repo, repo
 from models import CaseCreate, TextIn
-from pipeline import Pipeline, pipeline
+from pipeline import Pipeline
+from seed import seed_dev_users
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
 
-# Separate pipeline instance so demo writes never touch data/cases/
+repo = DbRepository(demo=False)
+demo_repo = DbRepository(demo=True)
+pipeline = Pipeline(repository=repo)
 demo_pipeline = Pipeline(repository=demo_repo)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await seed_dev_users()
+    yield
+
 
 app = FastAPI(
     title="nyayaos-lite",
-    description="NyayaOS — officer/lawyer case dashboard. Real cases in data/cases/.",
+    description="NyayaOS — officer/lawyer case dashboard. Structured state in PostgreSQL.",
+    lifespan=lifespan,
 )
+app.include_router(auth_router)
 
 
 @app.get("/api/health")
-def health() -> Dict[str, Any]:
+async def health() -> Dict[str, Any]:
     return {
         "service": "nyayaos-lite",
-        "pipeline": "text → Gemini/fallback → JSON files → CAMS → Digital Twin",
+        "pipeline": "text → Gemini/fallback → PostgreSQL → CAMS → Digital Twin",
+        "storage": "postgresql",
         "weights": WEIGHTS,
         "tau": TAU,
         "delta": DELTA,
-        "real_cases_root": str(repo.root),
-        "demo_cases_root": str(demo_repo.root),
+        "real_cases_root": str(DATA_ROOT),
+        "demo_cases_root": str(DEMO_DATA_ROOT),
         "disclaimer": "CAMS confidence is not legal truth. Evaluation data is synthetic.",
     }
 
@@ -68,21 +84,21 @@ def api_evaluation() -> Dict[str, Any]:
 
 
 @app.post("/api/reset-demo")
-def api_reset_demo() -> Dict[str, str]:
-    """Wipe ONLY data/demo_cases/. Never touches data/cases/."""
-    demo_repo.reset_all()
+async def api_reset_demo() -> Dict[str, str]:
+    """Wipe ONLY demo-scoped PostgreSQL rows + data/demo_cases/. Never touches real cases."""
+    await demo_repo.reset_all()
     return {
         "status": "ok",
         "message": f"Cleared demo cases under {DEMO_DATA_ROOT}",
     }
 
 
-# ---- Real cases (data/cases/) ----
+# ---- Real cases (PostgreSQL, is_demo=False) ----
 
 
 @app.post("/cases")
-def create_case(body: CaseCreate) -> Dict[str, Any]:
-    return pipeline.create_case(
+async def create_case(body: CaseCreate) -> Dict[str, Any]:
+    return await pipeline.create_case(
         case_id=body.case_id,
         title=body.title,
         description=body.description,
@@ -90,22 +106,22 @@ def create_case(body: CaseCreate) -> Dict[str, Any]:
 
 
 @app.get("/cases")
-def list_cases() -> List[Dict[str, Any]]:
-    return repo.list_cases()
+async def list_cases() -> List[Dict[str, Any]]:
+    return await repo.list_cases()
 
 
 @app.get("/cases/{case_id}")
-def get_case(case_id: str) -> Dict[str, Any]:
+async def get_case(case_id: str) -> Dict[str, Any]:
     try:
-        return pipeline.case_snapshot(case_id)
+        return await pipeline.case_snapshot(case_id)
     except KeyError:
         raise HTTPException(404, f"case not found: {case_id}") from None
 
 
 @app.post("/cases/{case_id}/text")
-def ingest_text(case_id: str, body: TextIn) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return pipeline.ingest_text(
+async def ingest_text(case_id: str, body: TextIn) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return await pipeline.ingest_text(
         case_id=case_id,
         text=body.text,
         source=body.source,
@@ -124,11 +140,11 @@ async def upload_document(
     force_fallback: bool = Form(False),
     title: str = Form(""),
 ) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
+    await repo.ensure_case(case_id)
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty upload")
-    return pipeline.ingest_upload(
+    return await pipeline.ingest_upload(
         case_id=case_id,
         filename=file.filename or "upload.bin",
         data=data,
@@ -141,82 +157,83 @@ async def upload_document(
 
 
 @app.get("/cases/{case_id}/full")
-def full_case(case_id: str) -> Dict[str, Any]:
+async def full_case(case_id: str) -> Dict[str, Any]:
     try:
-        repo.get_case(case_id)
+        await repo.get_case(case_id)
     except KeyError:
         raise HTTPException(404, f"case not found: {case_id}") from None
-    return pipeline.full_case_view(case_id)
+    return await pipeline.full_case_view(case_id)
 
 
 @app.get("/cases/{case_id}/stakeholders")
-def stakeholders(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "stakeholders": repo.list_stakeholders(case_id)}
+async def stakeholders(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "stakeholders": await repo.list_stakeholders(case_id)}
 
 
 @app.get("/cases/{case_id}/observations")
-def get_observations(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "observations": repo.get_observations(case_id)}
+async def get_observations(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "observations": await repo.get_observations(case_id)}
 
 
 @app.get("/cases/{case_id}/facts")
-def get_facts(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "facts": repo.get_facts(case_id)}
+async def get_facts(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "facts": await repo.get_facts(case_id)}
 
 
 @app.get("/cases/{case_id}/history")
-def get_history(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "history": repo.get_history(case_id)}
+async def get_history(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "history": await repo.get_history(case_id)}
 
 
 @app.get("/cases/{case_id}/conflicts")
-def get_conflicts(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "conflicts": repo.get_conflicts(case_id)}
+async def get_conflicts(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "conflicts": await repo.get_conflicts(case_id)}
 
 
 @app.get("/cases/{case_id}/provenance")
-def get_provenance(case_id: str) -> Dict[str, Any]:
+async def get_provenance(case_id: str) -> Dict[str, Any]:
     try:
-        return pipeline.provenance(case_id)
+        await repo.get_case(case_id)
     except KeyError:
         raise HTTPException(404, f"case not found: {case_id}") from None
+    return await pipeline.provenance(case_id)
 
 
 @app.get("/cases/{case_id}/documents")
-def get_documents(case_id: str) -> Dict[str, Any]:
-    repo.ensure_case(case_id)
-    return {"case_id": case_id, "documents": repo.get_documents(case_id)}
+async def get_documents(case_id: str) -> Dict[str, Any]:
+    await repo.ensure_case(case_id)
+    return {"case_id": case_id, "documents": await repo.get_documents(case_id)}
 
 
 @app.post("/cases/{case_id}/resync")
-def resync(case_id: str) -> Dict[str, Any]:
+async def resync(case_id: str) -> Dict[str, Any]:
     try:
-        repo.get_case(case_id)
+        await repo.get_case(case_id)
     except KeyError:
         raise HTTPException(404, f"case not found: {case_id}") from None
-    return pipeline.resync(case_id)
+    return await pipeline.resync(case_id)
 
 
-# ---- Demo (data/demo_cases/ ONLY) ----
+# ---- Demo (PostgreSQL is_demo=True + data/demo_cases/ uploads) ----
 
 
 @app.post("/demo/case-001")
-def demo_case_001(reset: bool = False) -> Dict[str, Any]:
+async def demo_case_001(reset: bool = False) -> Dict[str, Any]:
     """
-    Synthetic CASE-001 demo. Writes only under data/demo_cases/.
-    reset=True clears demo_cases only — never data/cases/.
+    Synthetic CASE-001 demo. Writes only demo-scoped PostgreSQL rows + data/demo_cases/.
+    reset=True clears demo data only — never real cases.
     """
     if reset:
-        demo_repo.reset_all()
-    demo_pipeline.create_case(CASE_001_ID, CASE_001_TITLE, CASE_001_DESCRIPTION)
+        await demo_repo.reset_all()
+    await demo_pipeline.create_case(CASE_001_ID, CASE_001_TITLE, CASE_001_DESCRIPTION)
     steps = []
     for doc in case_001_documents():
-        result = demo_pipeline.ingest_text(
+        result = await demo_pipeline.ingest_text(
             CASE_001_ID,
             text=doc["text"],
             source=doc["source_id"],
@@ -229,26 +246,26 @@ def demo_case_001(reset: bool = False) -> Dict[str, Any]:
         "case_id": CASE_001_ID,
         "storage": str(demo_repo.root / CASE_001_ID),
         "steps": steps,
-        "snapshot": demo_pipeline.case_snapshot(CASE_001_ID),
+        "snapshot": await demo_pipeline.case_snapshot(CASE_001_ID),
     }
 
 
 @app.post("/demo/scenario/{name}")
-def demo_scenario(name: str, case_id: str = Query(default=CASE_001_ID)) -> Dict[str, Any]:
-    """Scenario buttons — always use demo_pipeline / data/demo_cases/."""
-    demo_repo.ensure_case(
+async def demo_scenario(name: str, case_id: str = Query(default=CASE_001_ID)) -> Dict[str, Any]:
+    """Scenario buttons — always use demo_pipeline (is_demo=True)."""
+    await demo_repo.ensure_case(
         case_id, title=CASE_001_TITLE if case_id == CASE_001_ID else case_id
     )
     key = name.lower().strip()
     if key in ("full", "full-demo", "case-001"):
-        return demo_case_001(reset=False)
+        return await demo_case_001(reset=False)
 
     if key in ("corroboration",):
         outs = []
         for d in case_001_documents():
             if d.get("scenario") == "corroboration":
                 outs.append(
-                    demo_pipeline.ingest_text(
+                    await demo_pipeline.ingest_text(
                         case_id,
                         text=d["text"],
                         source=d["source_id"],
@@ -261,14 +278,14 @@ def demo_scenario(name: str, case_id: str = Query(default=CASE_001_ID)) -> Dict[
             "scenario": name,
             "storage": str(demo_repo.root / case_id),
             "results": outs,
-            "snapshot": demo_pipeline.case_snapshot(case_id),
+            "snapshot": await demo_pipeline.case_snapshot(case_id),
         }
 
     try:
         doc = scenario_document(name)
     except KeyError as e:
         raise HTTPException(400, str(e)) from e
-    result = demo_pipeline.ingest_text(
+    result = await demo_pipeline.ingest_text(
         case_id,
         text=doc["text"],
         source=doc["source_id"],
@@ -280,7 +297,7 @@ def demo_scenario(name: str, case_id: str = Query(default=CASE_001_ID)) -> Dict[
         "scenario": name,
         "storage": str(demo_repo.root / case_id),
         "result": result,
-        "snapshot": demo_pipeline.case_snapshot(case_id),
+        "snapshot": await demo_pipeline.case_snapshot(case_id),
     }
 
 
