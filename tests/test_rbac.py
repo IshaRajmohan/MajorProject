@@ -661,10 +661,19 @@ def test_mutation_routes_are_exactly_the_reviewed_surface(client):
 
     import main as main_mod
 
+    def iter_routes(routes):
+        # FastAPI >= 0.141 wraps include_router targets in lazy _IncludedRouter
+        # objects instead of flattening them into app.routes; recurse so the
+        # guard sees nested /auth and /users routes on any FastAPI version.
+        for route in routes:
+            nested = getattr(route, "original_router", None)
+            if nested is not None and hasattr(nested, "routes"):
+                yield from iter_routes(nested.routes)
+            elif isinstance(route, Route):
+                yield route
+
     actual = set()
-    for route in main_mod.app.routes:
-        if not isinstance(route, Route):
-            continue
+    for route in iter_routes(main_mod.app.routes):
         for method in (route.methods or set()) & {"POST", "PUT", "PATCH", "DELETE"}:
             actual.add((method, route.path))
 

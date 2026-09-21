@@ -1,0 +1,48 @@
+# Isolated Task 1-4 stack for branch khushi-test.
+#
+# Deliberately separate from the legacy "majorproject-*" stack: own Compose
+# project name, own database (nyayaos_rbac), own host ports (8002 / 5433).
+# The legacy "nyayaos" database is never referenced by this file.
+name: nyayaos-task14
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nyayaos
+      POSTGRES_PASSWORD: nyayaos
+      POSTGRES_DB: nyayaos_rbac
+    ports:
+      - "5433:5432"
+    volumes:
+      - task14_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nyayaos -d nyayaos_rbac"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    # Pinned on purpose: Compose "environment" beats env_file and load_dotenv()
+    # (override=False), so processes in this container can only reach nyayaos_rbac.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nyayaos:nyayaos@db:5432/nyayaos_rbac
+    # Migrate before serving: the API seeds dev users during startup and needs tables.
+    command: sh -c "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - ./:/app
+    ports:
+      - "8002:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  task14_pgdata:
