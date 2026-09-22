@@ -136,6 +136,25 @@ CAMS numbers in A11 reproducible.
 > block, which overrides both `env_file` and `load_dotenv()`. Even a stale `.env` cannot
 > point the containers at the wrong database. The compose file never mentions `nyayaos`.
 
+> ⚠️ **The #1 setup mistake — "DB keeps disconnecting" / "auth not working at all".**
+> The `.env` value `...@db:5432/...` uses the hostname **`db`**, which only resolves
+> *inside* the Docker Compose network. If you run `uvicorn main:app` (or `alembic`,
+> `pytest`, `seed.py`, `cli.py`) **directly on the Windows host** with that URL, every
+> connection fails with `gaierror: [Errno 11001] getaddrinfo failed` — which looks exactly
+> like the database "disconnecting again and again". Because `POST /auth/login` needs the
+> DB, login then fails too, so it looks like "auth isn't working at all". **Both symptoms
+> have this one cause.** Run one of these two ways:
+>
+> 1. **Supported (Docker):** `docker compose up -d --build`, then open the UI at
+>    **http://localhost:8002**. Compose pins the correct `db:5432` URL inside the container —
+>    nothing else to set.
+> 2. **Host tooling (advanced):** if you intentionally run `alembic` / `pytest` / `seed.py`
+>    on the host against the compose-published database, override the URL for that shell —
+>    `DATABASE_URL=postgresql+asyncpg://nyayaos:nyayaos@localhost:5433/nyayaos_rbac`
+>    (port **5433**, not 5432) — and set `PYTHONUTF8=1` so `console_log`'s ✓/→ glyphs don't
+>    crash a redirected stdout under cp1252. Never edit the pinned `.env` value to `localhost`
+>    while running the containers; that breaks the in-container path.
+
 ### A1.5 Check that ports 8002 and 5433 are free
 
 ```powershell
@@ -167,7 +186,7 @@ docker compose logs api --tail 40
 ```
 
 Expected, in order:
-- three `Running upgrade ... -> t1pg0001 / t2auth0002 / t3rbac0003` lines (first boot only)
+- three `Running upgrade ... -> t1auth0001 / t2data0002 / t3rbac0003` lines (first boot only)
 - `INFO:     Uvicorn running on http://0.0.0.0:8000`
 - `INFO:     Application startup complete.`
 
