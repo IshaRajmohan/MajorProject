@@ -222,13 +222,19 @@
 
   async function createCase() {
     const case_id = $("newCaseId").value.trim() || null;
-    const title = $("newCaseTitle").value.trim() || "Untitled case";
+    const title = $("newCaseTitle").value.trim();
+    if (!title) {
+      $("caseStatus").innerHTML = '<span class="err">Enter a case title first.</span>';
+      $("newCaseTitle").focus();
+      return;
+    }
+    const description = $("newCaseDescription").value.trim();
     $("caseStatus").textContent = "Creating…";
     try {
       const meta = await api("/cases", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ case_id, title, description: "Created via web dashboard" }),
+        body: JSON.stringify({ case_id, title, description }),
       });
       await refreshCaseList();
       $("caseSelect").value = meta.case_id;
@@ -283,7 +289,7 @@
       return;
     }
 
-    const rows = [...keys].sort().map((key) => {
+    const parts = [...keys].sort().map((key) => {
       const fact = twin[key] || {};
       const conflict = conflicts[key];
       const unresolved =
@@ -319,34 +325,35 @@
       const provenance = (fact.provenance || [])
         .map(
           (p) =>
-            `${escapeHtml(p.source_type || "")}/${escapeHtml(p.source || "")}` +
-            ` → ${escapeHtml(JSON.stringify(p.value))}`
+            `<li><span class="mono">${escapeHtml(p.source_type || "")}/${escapeHtml(p.source || "")}</span>` +
+            ` → <span class="mono">${escapeHtml(JSON.stringify(p.value))}</span></li>`
         )
-        .join("; ");
+        .join("");
 
       return `
-        <tr>
-          <td class="mono">${escapeHtml(key)}</td>
-          <td class="mono">${escapeHtml(JSON.stringify(fact.value ?? null))}</td>
-          <td class="mono">${fmtConf(fact.confidence)}</td>
-          <td>${statusBadge}${conflictHtml}</td>
-          <td class="mono" style="font-size:0.75rem">${provenance || "—"}</td>
-        </tr>`;
+        <details class="twin-part">
+          <summary>
+            <span class="mono twin-key">${escapeHtml(key)}</span>
+            <span class="mono twin-val">${escapeHtml(JSON.stringify(fact.value ?? null))}</span>
+            ${statusBadge}
+          </summary>
+          <div class="twin-detail">
+            <div class="twin-grid">
+              <span class="k">Confidence</span><span class="mono">${fmtConf(fact.confidence)}</span>
+              <span class="k">Status</span><span>${escapeHtml(fact.status || "—")}</span>
+            </div>
+            ${conflictHtml}
+            <div class="twin-sources">
+              <div class="k">Supporting sources</div>
+              ${provenance ? `<ul>${provenance}</ul>` : '<div class="mono">—</div>'}
+            </div>
+          </div>
+        </details>`;
     });
 
-    $("twinBody").innerHTML = `
-      <table class="facts">
-        <thead>
-          <tr>
-            <th>Fact</th>
-            <th>Value</th>
-            <th>Confidence</th>
-            <th>Status</th>
-            <th>Supporting sources</th>
-          </tr>
-        </thead>
-        <tbody>${rows.join("")}</tbody>
-      </table>`;
+    $("twinBody").innerHTML =
+      '<p class="hint">Click a part to expand its details.</p>' +
+      `<div class="twin-parts">${parts.join("")}</div>`;
   }
 
   async function loadFull(caseId) {
@@ -484,10 +491,12 @@
     $("uploadStatus").textContent = "Ingesting text…";
     $("btnPasteText").disabled = true;
     try {
+      const firstLine = text.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).find(Boolean) || "";
+      const derivedTitle = firstLine.length > 60 ? `${firstLine.slice(0, 57).trimEnd()}…` : firstLine;
       const payload = {
         text,
         force_fallback: $("forceFallback").value === "true",
-        title: "web-paste",
+        title: derivedTitle,
       };
       const visibility = requestedVisibility();
       if (visibility) payload.visibility = visibility;

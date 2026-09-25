@@ -176,6 +176,40 @@
       font-size: 0.85rem;
     }
     .conflict-box strong { color: var(--warn); }
+    .twin-parts { display: grid; gap: 0.4rem; }
+    details.twin-part { border: 1px solid var(--line); background: #fbfcfd; }
+    details.twin-part > summary {
+      padding: 0.45rem 0.6rem;
+      cursor: pointer;
+      display: block;
+    }
+    details.twin-part > summary:hover { background: #eef3f8; }
+    details.twin-part[open] > summary {
+      background: #eef3f8;
+      border-bottom: 1px solid var(--line);
+    }
+    details.twin-part > summary .twin-key { font-weight: 640; margin-right: 0.5rem; }
+    details.twin-part > summary .twin-val { margin-right: 0.5rem; }
+    .twin-detail {
+      padding: 0.55rem 0.65rem 0.65rem;
+      display: grid;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .twin-detail .k {
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .twin-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.2rem 1rem;
+      align-items: baseline;
+    }
+    .twin-sources ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+    .twin-sources li { margin-bottom: 0.15rem; }
     .mono { font-family: var(--mono); font-size: 0.82rem; }
     .empty { color: var(--muted); font-style: italic; padding: 0.5rem 0; }
     .err { color: var(--err); }
@@ -236,8 +270,11 @@
         <label>New case ID (optional)
           <input id="newCaseId" placeholder="auto if blank" style="min-width: 12rem" />
         </label>
-        <label>Title
-          <input id="newCaseTitle" placeholder="Untitled case" style="min-width: 14rem" />
+        <label>Title (required)
+          <input id="newCaseTitle" placeholder="case title" style="min-width: 14rem" />
+        </label>
+        <label>Description (optional)
+          <input id="newCaseDescription" placeholder="short note" style="min-width: 16rem" />
         </label>
         <button type="button" id="btnCreateCase">Create case</button>
       </div>

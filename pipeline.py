@@ -283,6 +283,9 @@ class Pipeline:
         )
         clog.step("Saved raw file under case/uploads and stakeholders/.../documents")
         clog.kv("saved_as", upload_record.get("stored_filename"))
+        if upload_record.get("extracted_text_path"):
+            clog.kv("extracted_md", str(upload_record["extracted_text_path"]))
+            clog.detail("Extracted text saved to disk before Gemini — inspect it to check extraction quality")
 
         if not ocr.get("ok"):
             clog.done("OCR produced no text — file stored; paste text to continue extraction")

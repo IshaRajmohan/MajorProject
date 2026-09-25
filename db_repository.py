@@ -236,6 +236,38 @@ def _upload_to_dict(row: db_models.Upload) -> Dict[str, Any]:
     }
 
 
+def _extraction_markdown(
+    *,
+    filename: str,
+    method: Optional[str],
+    note: Optional[str],
+    source_type: str,
+    source_id: str,
+    saved_at: datetime,
+    byte_size: int,
+    text: str,
+) -> str:
+    lines = [
+        f"# Extracted text — {filename}",
+        "",
+        f"- Method: `{method or 'unknown'}`",
+    ]
+    if note:
+        lines.append(f"- Note: {note}")
+    lines += [
+        f"- Stakeholder: `{stakeholder_key(source_type, source_id)}`",
+        f"- Extracted at: {saved_at.isoformat()}",
+        f"- Source bytes: {byte_size}",
+        f"- Characters extracted: {len(text)}",
+        "",
+        "---",
+        "",
+        text,
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _submission_options():
     return (
         selectinload(db_models.Submission.submitter),
@@ -780,10 +812,23 @@ class DbRepository:
             sh_doc = sh / "documents" / stored_name
             sh_doc.write_bytes(data)
 
+            saved_at = _utcnow()
             text_path: Optional[Path] = None
             if extracted_text:
-                text_path = sh / "documents" / f"{uid}__extracted.txt"
-                text_path.write_text(extracted_text, encoding="utf-8")
+                text_path = sh / "documents" / f"{uid}__extracted.md"
+                text_path.write_text(
+                    _extraction_markdown(
+                        filename=filename,
+                        method=meta.get("ocr_method"),
+                        note=meta.get("ocr_note"),
+                        source_type=source_type,
+                        source_id=source_id,
+                        saved_at=saved_at,
+                        byte_size=len(data),
+                        text=extracted_text,
+                    ),
+                    encoding="utf-8",
+                )
 
             row = db_models.Upload(
                 upload_id=uuid4(),
@@ -798,7 +843,7 @@ class DbRepository:
                 byte_size=len(data),
                 ocr_method=meta.get("ocr_method"),
                 ocr_note=meta.get("ocr_note"),
-                saved_at=_utcnow(),
+                saved_at=saved_at,
             )
             session.add(row)
             await session.commit()

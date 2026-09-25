@@ -1,6 +1,6 @@
 """Neutral runtime filesystem paths (Task 4).
 
-Only raw upload bytes and extracted .txt live on disk, under:
+Only raw upload bytes and extracted text (.md) live on disk, under:
 
   data/cases/{case_number}/        (is_demo=False — real cases)
   data/demo_cases/{case_number}/   (is_demo=True — demo cases)
