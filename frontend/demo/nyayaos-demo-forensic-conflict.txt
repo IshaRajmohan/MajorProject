@@ -1,0 +1,31 @@
+FORENSIC SCIENCE LABORATORY REPORT — DEMO DOCUMENT (SYNTHETIC DATA)
+
+Case reference: same case as nyayaos-demo-fir-police.txt
+Report No: FSL/2024/887
+Date: 20 April 2024
+Examiner: Demo Forensic Officer
+
+--- Structured facts (this is the block NyayaOS extracts) ---
+
+Charge: IPC 304
+Weapon: screwdriver
+Injury: incised wound
+Location: Mumbai
+Bail: rejected
+
+--- Findings ---
+
+Exhibit A recovered from the scene was examined under a comparison microscope.
+The wound profile observed on the medicolegal autopsy photograph is consistent
+with a narrower blade than the one recorded in the first information report.
+
+Upload this file AFTER nyayaos-demo-fir-police.txt, in the same case. Expected
+result: the Justice Twin reacts — every part that disagrees with the first
+document either flips to a new value or turns UNRESOLVED with a yellow Conflict
+box listing both candidates, their confidence scores and the margin. The first
+document's observations are never deleted (append-only), so both versions remain
+visible under "Supporting sources".
+
+An UNRESOLVED badge here is CAMS working as designed, not a failure: when the
+top two candidates are closer than delta = 0.10 the system refuses to overwrite
+the twin and keeps both claims for provenance.

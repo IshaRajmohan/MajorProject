@@ -1,0 +1,27 @@
+PRELIMINARY STATEMENT OF FACTS — DEMO DOCUMENT (SYNTHETIC DATA)
+
+This document deliberately contains no labelled fields. It is written the way a
+real narrative statement is written, in ordinary prose, with no "Charge:",
+"Weapon:" or "Location:" style prefixes anywhere.
+
+On the night in question an altercation took place outside a residential
+building in the Andheri MIDC area of the city. The complainant alleges that the
+accused struck the deceased once in the chest with a narrow bladed article
+recovered later from a drain nearby. The accused was taken into custody two days
+after the incident and was produced before the concerned magistrate the
+following morning. An application for release was moved and refused. The
+prosecution proposes to frame a culpable-homicide count under Section 302 of the
+Indian Penal Code at the stage of charge.
+
+Upload this file and watch the "Last ingest" box. Expected result: OCR reads the
+text successfully, but the rule-based extractor recognises ZERO facts, so no
+observations are created, CAMS never runs, and the Justice Twin is left
+UNCHANGED. The dashboard now says so plainly instead of claiming the twin was
+refreshed.
+
+Why this happens and what to do about it:
+  1. Set "Force fallback" to No (try Gemini) and re-upload. Gemini reads prose
+     and returns normalised facts with evidence quotes, so this same document
+     will populate the twin when GEMINI_API_KEY is configured.
+  2. Or upload nyayaos-demo-fir-police.txt, which carries the labelled block
+     the deterministic fallback extractor understands.

@@ -1,0 +1,27 @@
+FIRST INFORMATION REPORT — DEMO DOCUMENT (SYNTHETIC DATA, NOT A REAL CASE)
+
+Station: Andheri MIDC Police Station
+FIR No: 142/2024
+Registered: 12 April 2024
+Complainant: Demo Informant
+
+--- Structured facts (this is the block NyayaOS extracts) ---
+
+Charge: IPC 302
+Weapon: kitchen knife
+Injury: stab wound to chest
+Location: Mumbai
+Arrest date: 14 April 2024
+Bail: rejected
+
+--- Narrative ---
+
+The informant states that on the night of 12 April 2024 an altercation took
+place outside a residential building in the Andheri MIDC area. The accused was
+taken into custody two days later and the recovery of the article used in the
+assault was recorded in the spot panchnama.
+
+Upload this file from the dashboard (section 3) as COURT. Expected result: the
+Justice Twin goes from empty to six RESOLVED parts — charge, weapon_type,
+victim_injury, incident_location, arrest_date, bail_status — and the Documents
+table gains one row.

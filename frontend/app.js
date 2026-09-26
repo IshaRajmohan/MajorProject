@@ -415,6 +415,39 @@
     return $("markVisible").checked ? "CITIZEN_VISIBLE" : "INTERNAL";
   }
 
+  function ingestVerdict(result) {
+    const decisions = result.decisions || [];
+    const accepted = decisions.filter((d) => d.decided ?? d.decision === "ACCEPTED").length;
+    const abstained = decisions.length - accepted;
+    const factCount = (result.extraction && result.extraction.facts || []).length;
+
+    if (result.pipeline_ran === false) {
+      return {
+        changed: false,
+        text: "Justice Twin NOT updated — no readable text came out of that file, so the pipeline did not run.",
+      };
+    }
+    if (!decisions.length) {
+      return {
+        changed: false,
+        text: factCount
+          ? "Justice Twin NOT updated — facts were extracted but produced no CAMS decisions."
+          : "Justice Twin NOT updated — the extractor found no facts in this document.",
+      };
+    }
+    if (accepted) {
+      return {
+        changed: true,
+        text: `Justice Twin updated — ${accepted} part(s) accepted` +
+          (abstained ? `, ${abstained} abstained` : "") + ".",
+      };
+    }
+    return {
+      changed: false,
+      text: `Justice Twin values unchanged — CAMS ABSTAINED on all ${abstained} part(s); they are listed as UNRESOLVED.`,
+    };
+  }
+
   function renderIngestResult(result, boxId) {
     const box = $(boxId || "uploadResult");
     box.hidden = false;
@@ -432,13 +465,33 @@
         `</li>`
       );
     });
-    const ocrNote = result.ocr
-      ? `<p class="hint">OCR: ${escapeHtml(result.ocr.method || "")} — ${escapeHtml(result.ocr.note || "")}</p>`
+
+    const ocr = result.ocr;
+    const ocrHtml = ocr
+      ? `<p class="hint${ocr.ok ? "" : " err"}">OCR: ${escapeHtml(ocr.method || "none")} — ` +
+        `${escapeHtml(ocr.note || "")}</p>`
       : "";
+
+    const extraction = result.extraction;
+    let extractHtml = "";
+    if (extraction) {
+      const facts = extraction.facts || [];
+      const keys = [...new Set(facts.map((f) => f.fact_key))];
+      extractHtml =
+        `<p class="hint">Extractor: <span class="mono">${escapeHtml(extraction.extractor || "?")}</span> — ` +
+        `${facts.length} fact(s)` +
+        (keys.length ? ` <span class="mono">(${escapeHtml(keys.join(", "))})</span>` : "") +
+        `<br/>${escapeHtml(extraction.note || "")}</p>`;
+    }
+
+    const verdict = ingestVerdict(result);
     box.innerHTML =
-      `<strong>Last ingest</strong> (${escapeHtml(result.extractor || result.ocr?.method || "pipeline")})` +
-      ocrNote +
-      (lines.length ? `<ul>${lines.join("")}</ul>` : "<p class='hint'>No CAMS decisions in response.</p>");
+      `<strong>Last ingest</strong> ` +
+      `<span class="${verdict.changed ? "ok" : "err"}">${escapeHtml(verdict.text)}</span>` +
+      ocrHtml +
+      extractHtml +
+      (lines.length ? `<ul>${lines.join("")}</ul>` : "");
+    return verdict;
   }
 
   async function uploadFile() {
@@ -465,9 +518,10 @@
         method: "POST",
         body: fd,
       });
-      renderIngestResult(result);
-      $("uploadStatus").innerHTML =
-        '<span class="ok">Upload complete — twin refreshed.</span> <span class="hint">(source identity taken from your case role)</span>';
+      const verdict = renderIngestResult(result);
+      $("uploadStatus").innerHTML = verdict.changed
+        ? '<span class="ok">Upload complete — twin refreshed.</span> <span class="hint">(source identity taken from your case role)</span>'
+        : '<span class="err">File stored — Justice Twin unchanged.</span> <span class="hint">See “Last ingest” above for the reason.</span>';
       await Promise.all([loadFull(activeCaseId), loadDocuments(activeCaseId)]);
       $("fileInput").value = "";
     } catch (e) {
@@ -505,8 +559,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      renderIngestResult(result);
-      $("uploadStatus").innerHTML = '<span class="ok">Text ingested — twin refreshed.</span>';
+      const verdict = renderIngestResult(result);
+      $("uploadStatus").innerHTML = verdict.changed
+        ? '<span class="ok">Text ingested — twin refreshed.</span>'
+        : '<span class="err">Text recorded — Justice Twin unchanged.</span> <span class="hint">See “Last ingest” above for the reason.</span>';
       await Promise.all([loadFull(activeCaseId), loadDocuments(activeCaseId)]);
     } catch (e) {
       $("uploadStatus").innerHTML = `<span class="err">${errorText(e)}</span>`;
